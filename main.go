@@ -17,21 +17,15 @@ func (wsh webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     return 
   }
 
-  for{
+  for {
     mt, message, err := conn.ReadMessage()
+  
     if err != nil {
-      log.Println("Error %s when reading the message", err)
+      log.Printf("Error %s when reading the message from client", err)
+      return 
     }
 
-    if mt == websocket.Binarymessage {
-      err = c.WriteMessage(websocket.TextMessage, []byte("server doesn't support binary messages"))
-      if err != nil {
-        log.Printf("Error %s when sending message to client", err)
-      }
-      return
-    }
 
-    
   }
 
   defer conn.Close()
