@@ -51,12 +51,7 @@ document.addEventListener("keydown", (e) => {
     movement = { type: "move", direction: "up", paddle: "left" };
   } else if (e.key === "s") {
     movement = { type: "move", direction: "down", paddle: "left" };
-  } else if (e.key === "ArrowUp") {
-    movement = { type: "move", direction: "up", paddle: "right" };
-  } else if (e.key === "ArrowDown") {
-    movement = { type: "move", direction: "down", paddle: "right" };
   } 
-
 
   if (movement) {
     socket.send(JSON.stringify(movement));
