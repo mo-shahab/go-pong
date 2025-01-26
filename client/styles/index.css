@@ -28,13 +28,13 @@ body {
 #left-paddle {
   left: 10px;
   top: 50%;
-  transform: translateY(-50%);
+  position: absolute;
 }
 
 #right-paddle {
   right: 10px;
   top: 50%;
-  transform: translateY(-50%);
+  position: absolute;
 }
 
 #ball {
