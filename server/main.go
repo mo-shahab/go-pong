@@ -14,7 +14,24 @@ type paddleData struct {
   position int
 }
 
+
+
+// struct team ? do we need it, i am not sure about that 
+
+// this should also handle the team data -> one way of doing things like that
+
+/*
 type webSocketHandler struct {
+  upgrader websocket.Upgrader
+  leftPaddleData paddleData
+  rightPaddleData paddleData
+  team team
+  mu sync.Mutex
+  connections map[*websocket.Conn]string
+}
+*/
+
+type webSocketHandler struct { lasd
   upgrader websocket.Upgrader
   leftPaddleData paddleData
   rightPaddleData paddleData
@@ -104,7 +121,9 @@ func (wsh webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
       continue  
     }
 
-    // update the paddle position
+    // update the paddle positiono
+    // here there is a problem, it is updating the position based on teams, and
+    // in this case only that particular team's paddle will be updated ? V 
     wsh.mu.Lock()
     if team == "left"{
       wsh.leftPaddleData.movementSum += movement
