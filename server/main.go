@@ -165,6 +165,21 @@ func (wsh *webSocketHandler) disconnectPlayer (conn *websocket.Conn, team string
   } else {
     wsh.rightPaddleData.players--
   }
+
+  //Automatic Position Reset
+  /* if team == "left" {
+    wsh.leftPaddleData.players--
+    if wsh.leftPaddleData.players == 0 {
+      wsh.leftPaddleData.position = 0  // Reset position
+      wsh.leftPaddleData.movementSum = 0
+    }
+  } else {
+    wsh.rightPaddleData.players--
+    if wsh.rightPaddleData.players == 0 {
+      wsh.rightPaddleData.position = 0
+      wsh.rightPaddleData.movementSum = 0
+    }
+  } */
 }
 
 func (wsh *webSocketHandler) broadcastPaddlePositions (){
