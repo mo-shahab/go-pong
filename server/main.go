@@ -125,14 +125,29 @@ func (wsh webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     // here there is a problem, it is updating the position based on teams, and
     // in this case only that particular team's paddle will be updated ? V 
     wsh.mu.Lock()
-    if team == "left"{
+    if team == "left" {
       wsh.leftPaddleData.movementSum += movement
-      wsh.leftPaddleData.position = wsh.leftPaddleData.movementSum / wsh.leftPaddleData.players
-      wsh.leftPaddleData.movementSum = 0
+      
+      // Add safety check for zero players
+      if wsh.leftPaddleData.players > 0 {
+        wsh.leftPaddleData.position = wsh.leftPaddleData.movementSum / wsh.leftPaddleData.players
+        wsh.leftPaddleData.movementSum = 0  // Only reset if calculation happened
+      } else {
+        // Optional: Reset to default position if no players
+        wsh.leftPaddleData.position = 0
+        wsh.leftPaddleData.movementSum = 0
+      }
     } else {
       wsh.rightPaddleData.movementSum += movement
-      wsh.rightPaddleData.position = wsh.rightPaddleData.movementSum / wsh.rightPaddleData.players
-      wsh.rightPaddleData.movementSum = 0
+      
+      // Add identical check for right paddle
+      if wsh.rightPaddleData.players > 0 {
+        wsh.rightPaddleData.position = wsh.rightPaddleData.movementSum / wsh.rightPaddleData.players
+        wsh.rightPaddleData.movementSum = 0
+      } else {
+        wsh.rightPaddleData.position = 0
+        wsh.rightPaddleData.movementSum = 0
+      }
     }
     wsh.mu.Unlock()
 
