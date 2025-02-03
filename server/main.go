@@ -31,7 +31,7 @@ type webSocketHandler struct {
 }
 */
 
-type webSocketHandler struct { lasd
+type webSocketHandler struct {
   upgrader websocket.Upgrader
   leftPaddleData paddleData
   rightPaddleData paddleData
