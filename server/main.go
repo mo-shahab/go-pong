@@ -20,6 +20,11 @@ type ball struct {
 	dx, dy float64
 }
 
+type canvas struct {
+  width float64
+  height float64
+}
+
 type Client struct {
 	conn      *websocket.Conn
 	sendQueue chan interface{}
@@ -31,6 +36,7 @@ type webSocketHandler struct {
 	leftPaddleData  paddleData
 	rightPaddleData paddleData
 	ballVar         ball
+  canvasVar canvas
 	mu              sync.Mutex
 	connections     map[*websocket.Conn]*Client
 }
@@ -54,6 +60,7 @@ func (wsh *webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		sendQueue: make(chan interface{}, 100), // Increased buffer size
 	}
 
+  // a message queue, that sends the data to the client
 	go func() {
 		for msg := range client.sendQueue {
 			err := client.conn.WriteJSON(msg)
@@ -71,18 +78,6 @@ func (wsh *webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	wsh.mu.Lock()
-	connectionCount := len(wsh.connections)
-
-	if connectionCount <= 0 {
-		wsh.ballVar = ball{
-			x:  150,
-			y:  45,
-			dx: 1,
-			dy: 1,
-		}
-
-		go wsh.startBallUpdates()
-	}
 
 	if len(wsh.connections) == 0 {
 		globalPaddlePositions.leftPaddle = 0
@@ -125,6 +120,8 @@ func (wsh *webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Type      string `json:"type"`
 			Direction string `json:"direction"`
 			Paddle    string `json:"paddle"`
+      Width float64 `json:width,omitempty`
+      Height float64 `json:height,omitempty`
 		}
 
 		err = json.Unmarshal(p, &msg)
@@ -135,16 +132,42 @@ func (wsh *webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+    if msg.Type == "init" {
+      wsh.mu.Lock()
+      if len(wsh.connections) == 0 {
+        wsh.ballVar = ball {
+          x: 300,
+          y: 400, 
+          dx: 2,
+          dy: 2,
+        }
+
+        wsh.canvasVar.width = msg.Width
+        wsh.canvasVar.height = msg.Height
+      }
+      wsh.mu.Unlock()
+    }
+
+    wsh.mu.Lock()
+    if len(wsh.connections) == 1 {
+        go wsh.startBallUpdates()
+    }
+    wsh.mu.Unlock()
+
 		// Validate message
+    /*
 		valid := true
-		if msg.Type != "move" {
+		if msg.Type != "move" || msg.Type != "init" {
 			log.Println("Invalid type:", msg.Type)
 			valid = false
 		}
-		if msg.Direction != "up" && msg.Direction != "down" {
-			log.Println("Invalid direction:", msg.Direction)
-			valid = false
-		}
+
+    if msg.Type == "move" {
+      if msg.Direction != "up" && msg.Direction != "down" {
+        log.Println("Invalid direction:", msg.Direction)
+        valid = false
+      }
+    }
 
 		if !valid {
 			log.Println("Invalid message received")
@@ -153,6 +176,7 @@ func (wsh *webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		log.Printf("Valid message received: %+v\n", msg)
+    */
 		client.sendQueue <- map[string]string{"status": "Message processed"}
 
 		var movement int
@@ -194,6 +218,8 @@ func (wsh *webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (wsh *webSocketHandler) startBallUpdates() {
+	log.Println("startBallUpdates started") // Debugging log
+
 	ticker := time.NewTicker(16 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -202,11 +228,13 @@ func (wsh *webSocketHandler) startBallUpdates() {
 
 		wsh.mu.Lock()
 		if len(wsh.connections) == 0 {
+			log.Println("No active connections, skipping update") // Debugging log
 			wsh.mu.Unlock()
-			return
+			continue
 		}
 		wsh.mu.Unlock()
 
+		log.Println("Updating ball position") // Debugging log
 		wsh.updateBallPosition()
 
 		wsh.mu.Lock()
@@ -218,6 +246,7 @@ func (wsh *webSocketHandler) startBallUpdates() {
 		}
 		wsh.mu.Unlock()
 
+		log.Println("Broadcasting message:", message) // Debugging log
 		wsh.broadcastToAll(message)
 	}
 }
@@ -263,12 +292,14 @@ func (wsh *webSocketHandler) broadcastPaddlePositions() {
 func (wsh *webSocketHandler) broadcastToAll(message interface{}) {
 	wsh.mu.Lock()
 	defer wsh.mu.Unlock()
+	log.Println("Broadcasting message:", message) 
 
-	for _, client := range wsh.connections {
+	for conn, client := range wsh.connections {
 		select {
 		case client.sendQueue <- message:
+			log.Println("Message sent to client:", conn.RemoteAddr()) 
 		default:
-			log.Println("Dropping message, send queue full for client")
+			log.Println("Dropping message, send queue full for client", conn.RemoteAddr())
 		}
 	}
 }
@@ -277,11 +308,14 @@ func (wsh *webSocketHandler) updateBallPosition() {
 	wsh.mu.Lock()
 	defer wsh.mu.Unlock()
 
-	wsh.ballVar.x += wsh.ballVar.dx
-	wsh.ballVar.y += wsh.ballVar.dy
+  wsh.ballVar.x += wsh.ballVar.dx
+  log.Println(wsh.ballVar.x)
+  log.Println(wsh.ballVar.y)
 
-	maxWidth := 90.0
-	maxHeight := 90.0
+  wsh.ballVar.y += wsh.ballVar.dy
+
+	maxWidth := wsh.canvasVar.width
+	maxHeight := wsh.canvasVar.height
 
 	if wsh.ballVar.x <= 0 || wsh.ballVar.x >= maxWidth {
 		wsh.ballVar.dx *= -1

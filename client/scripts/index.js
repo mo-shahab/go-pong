@@ -28,7 +28,6 @@ function drawGame() {
   // Draw right paddle
   ctx.fillRect(gameWidth - 20, rightPaddleY, paddleWidth, paddleHeight);
 
-  // Draw ball
   ctx.beginPath();
   ctx.arc(ballX, ballY, 8, 0, Math.PI * 2);
   ctx.fill();
@@ -38,6 +37,14 @@ drawGame();
 
 socket.onopen = () => {
   console.log("Connected to WebSocket server");
+
+  const initData = {
+    type: "init",
+    width: gameWidth,
+    height: gameHeight,
+  }
+
+  socket.send(JSON.stringify(initData));
 };
 
 socket.onmessage = (event) => {
@@ -81,3 +88,9 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+window.addEventListener('beforeunload', (event) => {
+  if (ws) {
+    ws.close(1000, "Page is closing"); // Close the WebSocket connection
+    ws = null; // Important: Set ws to null to prevent further use
+  }
+});
