@@ -1,93 +1,142 @@
 package main
 
 import (
-  "log"
-  "net/http"
-  "encoding/json"
-  "sync"
-  "github.com/gorilla/websocket"
+	"encoding/json"
+	"github.com/gorilla/websocket"
+	"log"
+	"net/http"
+	"sync"
+	"time"
 )
 
 type paddleData struct {
-  movementSum int
-  players int 
-  position int
+	movementSum int
+	players     int
+	position    int
 }
 
-
-
-// struct team ? do we need it, i am not sure about that 
-
-// this should also handle the team data -> one way of doing things like that
-
-/*
-type webSocketHandler struct {
-  upgrader websocket.Upgrader
-  leftPaddleData paddleData
-  rightPaddleData paddleData
-  team team
-  mu sync.Mutex
-  connections map[*websocket.Conn]string
+type ball struct {
+	x, y   float64
+	dx, dy float64
 }
-*/
+
+type Client struct {
+	conn      *websocket.Conn
+	sendQueue chan interface{}
+	team      string
+}
 
 type webSocketHandler struct {
-  upgrader websocket.Upgrader
-  leftPaddleData paddleData
-  rightPaddleData paddleData
-  mu sync.Mutex
-  connections map[*websocket.Conn]string
+	upgrader        websocket.Upgrader
+	leftPaddleData  paddleData
+	rightPaddleData paddleData
+	ballVar         ball
+	mu              sync.Mutex
+	connections     map[*websocket.Conn]*Client
 }
 
-func (wsh webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-  conn, err := wsh.upgrader.Upgrade(w, r, nil)
-  if err != nil {
-    log.Println("Error %s when connecting to the socket", err)
-    return 
-  }
+type paddlePositions struct {
+	leftPaddle  int
+	rightPaddle int
+}
 
-  defer conn.Close()
+var globalPaddlePositions = &paddlePositions{leftPaddle: 0, rightPaddle: 0}
 
-  // assign connection (player) to a team (paddle)
-  wsh.mu.Lock()
-  var team string
-  if len(wsh.connections) % 2 == 0 {
-    team = "left"
-    wsh.leftPaddleData.players++
-  } else {
-    team = "right"
-    wsh.rightPaddleData.players++
-  }
+func (wsh *webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	conn, err := wsh.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("Error %s when connecting to the socket", err)
+		return
+	}
 
-  wsh.connections[conn] = team
-  wsh.mu.Unlock()
+	client := &Client{
+		conn:      conn,
+		sendQueue: make(chan interface{}, 100), // Increased buffer size
+	}
 
-  for {
-    _, p, err := conn.ReadMessage()
-    if err != nil {
-      log.Printf("error reading message from the client %s", err)
-      wsh.disconnectPlayer(conn, team)
-      return 
-    }
+	go func() {
+		for msg := range client.sendQueue {
+			err := client.conn.WriteJSON(msg)
+			if err != nil {
+				log.Println("Write error:", err)
+				client.conn.Close()
+				close(client.sendQueue)
 
-    log.Printf("Message received: %s", p)
+				wsh.mu.Lock()
+				delete(wsh.connections, conn)
+				wsh.mu.Unlock()
+				return
+			}
+		}
+	}()
 
-    var msg struct {
-      Type      string `json:"type"`
-      Direction string `json:"direction"`
-      Paddle    string `json:"paddle"`
-    }
+	wsh.mu.Lock()
+	connectionCount := len(wsh.connections)
 
-    err = json.Unmarshal(p, &msg)
-    if err != nil {
-      log.Printf("error unmarshalling message %s", err)
-      conn.WriteMessage(websocket.TextMessage, []byte("Invalid message received"))
-      continue
-    }
+	if connectionCount <= 0 {
+		wsh.ballVar = ball{
+			x:  150,
+			y:  45,
+			dx: 1,
+			dy: 1,
+		}
 
-    log.Printf("Parsed Message - Type: %s, Direction: %s, Paddle: %s", msg.Type, msg.Direction, msg.Paddle)
+		go wsh.startBallUpdates()
+	}
 
-    valid := true
+	if len(wsh.connections) == 0 {
+		globalPaddlePositions.leftPaddle = 0
+		globalPaddlePositions.rightPaddle = 0
+		wsh.leftPaddleData.position = 0
+		wsh.rightPaddleData.position = 0
+	}
+
+	if len(wsh.connections)%2 == 0 {
+		client.team = "left"
+		wsh.leftPaddleData.players++
+	} else {
+		client.team = "right"
+		wsh.rightPaddleData.players++
+	}
+
+	wsh.connections[conn] = client
+	wsh.mu.Unlock()
+
+	initialGameState := map[string]interface{}{
+		"leftPaddleData":  globalPaddlePositions.leftPaddle,
+		"rightPaddleData": globalPaddlePositions.rightPaddle,
+		"yourTeam":        client.team,
+	}
+
+	client.sendQueue <- initialGameState
+
+	// Handle incoming messages
+	for {
+		_, p, err := conn.ReadMessage()
+		if err != nil {
+			log.Printf("Error reading message from the client: %s", err)
+			wsh.disconnectPlayer(conn)
+			return
+		}
+
+		log.Printf("Message received: %s", p)
+
+		var msg struct {
+			Type      string `json:"type"`
+			Direction string `json:"direction"`
+			Paddle    string `json:"paddle"`
+		}
+
+		err = json.Unmarshal(p, &msg)
+		if err != nil {
+			log.Printf("Error unmarshalling message: %s", err)
+			// Send JSON error response
+			client.sendQueue <- map[string]string{"error": "Invalid message format"}
+			continue
+		}
+
+		// Validate message
+		valid := true
 		if msg.Type != "move" {
 			log.Println("Invalid type:", msg.Type)
 			valid = false
@@ -96,125 +145,165 @@ func (wsh webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			log.Println("Invalid direction:", msg.Direction)
 			valid = false
 		}
-		if msg.Paddle != "left" && msg.Paddle != "right" {
-			log.Println("Invalid paddle:", msg.Paddle)
-			valid = false
-		}
 
 		if !valid {
 			log.Println("Invalid message received")
-			conn.WriteMessage(websocket.TextMessage, []byte("Invalid message format"))
+			client.sendQueue <- map[string]string{"error": "Invalid message parameters"}
 			continue
 		}
 
-		// Handle valid message
 		log.Printf("Valid message received: %+v\n", msg)
-		conn.WriteMessage(websocket.TextMessage, []byte("Message processed"))
+		client.sendQueue <- map[string]string{"status": "Message processed"}
 
-    var movement int
-    if(msg.Direction == "up"){
-      movement = -10
-    } else if (msg.Direction  == "down"){
-      movement = 10
-    } else {
-      log.Println("Invalid message received")
-      continue  
-    }
+		var movement int
+		if msg.Direction == "up" {
+			movement = -10
+		} else if msg.Direction == "down" {
+			movement = 10
+		}
 
-    // update the paddle positiono
-    // here there is a problem, it is updating the position based on teams, and
-    // in this case only that particular team's paddle will be updated ? V 
-    wsh.mu.Lock()
-    if team == "left" {
-      wsh.leftPaddleData.movementSum += movement
-      
-      // Add safety check for zero players
-      if wsh.leftPaddleData.players > 0 {
-        wsh.leftPaddleData.position = wsh.leftPaddleData.movementSum / wsh.leftPaddleData.players
-        wsh.leftPaddleData.movementSum = 0  // Only reset if calculation happened
-      } else {
-        // Optional: Reset to default position if no players
-        wsh.leftPaddleData.position = 0
-        wsh.leftPaddleData.movementSum = 0
-      }
-    } else {
-      wsh.rightPaddleData.movementSum += movement
-      
-      // Add identical check for right paddle
-      if wsh.rightPaddleData.players > 0 {
-        wsh.rightPaddleData.position = wsh.rightPaddleData.movementSum / wsh.rightPaddleData.players
-        wsh.rightPaddleData.movementSum = 0
-      } else {
-        wsh.rightPaddleData.position = 0
-        wsh.rightPaddleData.movementSum = 0
-      }
-    }
-    wsh.mu.Unlock()
+		wsh.mu.Lock()
+		if client.team == "left" {
+			wsh.leftPaddleData.movementSum += movement
+			if wsh.leftPaddleData.players > 0 {
+				wsh.leftPaddleData.position = wsh.leftPaddleData.movementSum / wsh.leftPaddleData.players
+				wsh.rightPaddleData.position = 0
+				wsh.leftPaddleData.movementSum = 0
+			} else {
+				wsh.leftPaddleData.position = 0
+				wsh.leftPaddleData.movementSum = 0
+			}
+			globalPaddlePositions.leftPaddle += movement
+		} else {
+			wsh.rightPaddleData.movementSum += movement
+			if wsh.rightPaddleData.players > 0 {
+				wsh.rightPaddleData.position = wsh.rightPaddleData.movementSum / wsh.rightPaddleData.players
+				wsh.leftPaddleData.position = 0
+				wsh.rightPaddleData.movementSum = 0
+			} else {
+				wsh.rightPaddleData.position = 0
+				wsh.rightPaddleData.movementSum = 0
+			}
+			globalPaddlePositions.rightPaddle += movement
+		}
+		wsh.mu.Unlock()
 
-    wsh.broadcastPaddlePositions()
-  }
+		wsh.broadcastPaddlePositions()
+
+	}
 }
 
-func (wsh *webSocketHandler) disconnectPlayer (conn *websocket.Conn, team string){
-  wsh.mu.Lock() 
-  defer wsh.mu.Unlock()
+func (wsh *webSocketHandler) startBallUpdates() {
+	ticker := time.NewTicker(16 * time.Millisecond)
+	defer ticker.Stop()
 
-  delete(wsh.connections, conn)
-  if team == "left" {
-    wsh.leftPaddleData.players--
-  } else {
-    wsh.rightPaddleData.players--
-  }
+	for {
+		<-ticker.C
 
-  //Automatic Position Reset
-  /* if team == "left" {
-    wsh.leftPaddleData.players--
-    if wsh.leftPaddleData.players == 0 {
-      wsh.leftPaddleData.position = 0  // Reset position
-      wsh.leftPaddleData.movementSum = 0
-    }
-  } else {
-    wsh.rightPaddleData.players--
-    if wsh.rightPaddleData.players == 0 {
-      wsh.rightPaddleData.position = 0
-      wsh.rightPaddleData.movementSum = 0
-    }
-  } */
+		wsh.mu.Lock()
+		if len(wsh.connections) == 0 {
+			wsh.mu.Unlock()
+			return
+		}
+		wsh.mu.Unlock()
+
+		wsh.updateBallPosition()
+
+		wsh.mu.Lock()
+		message := map[string]interface{}{
+			"ball": map[string]float64{
+				"x": wsh.ballVar.x,
+				"y": wsh.ballVar.y,
+			},
+		}
+		wsh.mu.Unlock()
+
+		wsh.broadcastToAll(message)
+	}
 }
 
-func (wsh *webSocketHandler) broadcastPaddlePositions (){
-  wsh.mu.Lock() 
-  defer wsh.mu.Unlock()
-  
-  // prepare game state
-  gameState := map[string]int{
-    "leftPaddleData": wsh.leftPaddleData.position,
-    "rightPaddleData": wsh.rightPaddleData.position,
-  }
+func (wsh *webSocketHandler) disconnectPlayer(conn *websocket.Conn) {
+	wsh.mu.Lock()
+	defer wsh.mu.Unlock()
 
-  for conn, _ := range wsh.connections {
-    err := conn.WriteJSON(gameState)
-    if err != nil {
-      log.Printf("error writing to the client %s", err)
-      wsh.disconnectPlayer(conn, wsh.connections[conn])
-    }
-  }
+	client, exists := wsh.connections[conn]
+	if !exists {
+		return
+	}
+
+	if client.team == "left" {
+		wsh.leftPaddleData.players--
+	} else {
+		wsh.rightPaddleData.players--
+	}
+
+	close(client.sendQueue)
+	delete(wsh.connections, conn)
 }
 
-func main(){
-  wsh := &webSocketHandler{
-    upgrader: websocket.Upgrader{
-      CheckOrigin: func(r *http.Request) bool { return true },
-    },
-    // a memory allocation for all the connections
-    connections: make(map[*websocket.Conn]string),
-  }
+func (wsh *webSocketHandler) broadcastPaddlePositions() {
+	wsh.mu.Lock()
+	defer wsh.mu.Unlock()
 
-  fs := http.FileServer(http.Dir("../client/"))
+	// Prepare game state with current paddle positions
+	gameState := map[string]int{
+		"leftPaddleData":  wsh.leftPaddleData.position,
+		"rightPaddleData": wsh.rightPaddleData.position,
+	}
 
-  http.Handle("/", fs)
-  http.Handle("/ws", wsh)
-  log.Println("Server starting")
-  log.Fatal(http.ListenAndServe(":8080", nil))
-  
+	for _, client := range wsh.connections {
+		select {
+		case client.sendQueue <- gameState:
+		default:
+			log.Println("Dropping message, send queue full for client")
+		}
+	}
+}
+
+func (wsh *webSocketHandler) broadcastToAll(message interface{}) {
+	wsh.mu.Lock()
+	defer wsh.mu.Unlock()
+
+	for _, client := range wsh.connections {
+		select {
+		case client.sendQueue <- message:
+		default:
+			log.Println("Dropping message, send queue full for client")
+		}
+	}
+}
+
+func (wsh *webSocketHandler) updateBallPosition() {
+	wsh.mu.Lock()
+	defer wsh.mu.Unlock()
+
+	wsh.ballVar.x += wsh.ballVar.dx
+	wsh.ballVar.y += wsh.ballVar.dy
+
+	maxWidth := 90.0
+	maxHeight := 90.0
+
+	if wsh.ballVar.x <= 0 || wsh.ballVar.x >= maxWidth {
+		wsh.ballVar.dx *= -1
+	}
+
+	if wsh.ballVar.y <= 0 || wsh.ballVar.y >= maxHeight {
+		wsh.ballVar.dy *= -1
+	}
+}
+
+func main() {
+	wsh := &webSocketHandler{
+		upgrader: websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool { return true },
+		},
+		connections: make(map[*websocket.Conn]*Client),
+	}
+
+	fs := http.FileServer(http.Dir("../client/"))
+
+	http.Handle("/", fs)
+	http.Handle("/ws", wsh)
+	log.Println("Server starting at http://localhost:8080")
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
