@@ -48,3 +48,22 @@ body {
   transform: translate(-50%, -50%);
 }
 
+body {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  background-color: black;
+  margin: 0;
+}
+
+canvas {
+  background-color: black;
+  border: 2px solid #fff;
+  display: block;
+
+  width: 60vw;
+  height: 60vh;
+
+}
+
