@@ -3,6 +3,9 @@ package main
 import (
 	"encoding/json"
 	"github.com/gorilla/websocket"
+	"github.com/mo-shahab/go-pong/ball"
+	"github.com/mo-shahab/go-pong/paddle"
+	"github.com/mo-shahab/go-pong/canvas"
 	"log"
 	"math"
 	"math/rand"
@@ -13,7 +16,7 @@ import (
 
 type paddleData struct {
 	movementSum float64
-  velocity    float64
+	velocity    float64
 	players     int
 	position    float64
 }
@@ -22,22 +25,6 @@ type paddleData struct {
 // the rendering of the paddle, while the paddleData is used, for the socket
 // and the server interaction
 
-type paddle struct {
-	height float64
-	width  float64
-}
-
-type ball struct {
-	x, y    float64
-	dx, dy  float64
-	radius  float64
-	visible bool
-}
-
-type canvas struct {
-	width  float64
-	height float64
-}
 
 type Client struct {
 	conn      *websocket.Conn
@@ -50,9 +37,9 @@ type webSocketHandler struct {
 	upgrader        websocket.Upgrader
 	leftPaddleData  paddleData
 	rightPaddleData paddleData
-	ballVar         ball
-	canvasVar       canvas
-	paddleVar       paddle
+	ballVar         ball.Ball
+	canvasVar       canvas.Canvas
+	paddleVar       paddle.Paddle
 	mu              sync.Mutex
 	connections     map[string]*Client
 	connToId        map[*websocket.Conn]string
@@ -74,9 +61,9 @@ const (
 
 // paddle constants
 const (
-  maxSpeed = 10.0
-  acceleration = 2.0
-  friction = 0.9
+	maxSpeed     = 10.0
+	acceleration = 2.0
+	friction     = 0.9
 )
 
 var globalPaddlePositions = &paddlePositions{}
@@ -96,8 +83,8 @@ func (wsh *webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		id:        clientId,
 	}
 
-  globalPaddlePositions.leftPaddle = (wsh.canvasVar.height / 2) - (wsh.paddleVar.height / 2) 
-  globalPaddlePositions.rightPaddle = (wsh.canvasVar.height / 2) - (wsh.paddleVar.height / 2)
+	globalPaddlePositions.leftPaddle = (wsh.canvasVar.Height / 2) - (wsh.paddleVar.Height / 2)
+	globalPaddlePositions.rightPaddle = (wsh.canvasVar.Height / 2) - (wsh.paddleVar.Height / 2)
 
 	// a message queue, that sends the data to the client
 	go func() {
@@ -114,14 +101,14 @@ func (wsh *webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	wsh.mu.Lock()
 
-  if len(wsh.connections) == 0 {
-    globalPaddlePositions.leftPaddle = (wsh.canvasVar.height / 2) - (wsh.paddleVar.height / 2)
-    globalPaddlePositions.rightPaddle = (wsh.canvasVar.height / 2) - (wsh.paddleVar.height / 2)
-    wsh.leftPaddleData.position = globalPaddlePositions.leftPaddle
-    wsh.rightPaddleData.position = globalPaddlePositions.rightPaddle
-    wsh.ballRunning = false
-    wsh.ballVisible = false
-  }
+	if len(wsh.connections) == 0 {
+		globalPaddlePositions.leftPaddle = (wsh.canvasVar.Height / 2) - (wsh.paddleVar.Height / 2)
+		globalPaddlePositions.rightPaddle = (wsh.canvasVar.Height / 2) - (wsh.paddleVar.Height / 2)
+		wsh.leftPaddleData.position = globalPaddlePositions.leftPaddle
+		wsh.rightPaddleData.position = globalPaddlePositions.rightPaddle
+		wsh.ballRunning = false
+		wsh.ballVisible = false
+	}
 
 	if len(wsh.connections)%2 == 0 {
 		client.team = "left"
@@ -176,19 +163,20 @@ func (wsh *webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		if msg.Width > 0 && msg.Height > 0 {
 			wsh.mu.Lock()
-			wsh.ballVar = ball{
-				x:       msg.Width / 2,
-				y:       msg.Height / 2,
-				dx:      10,
-				dy:      10,
-				radius:  ballRadius,
-				visible: true,
+			wsh.ballVar = ball.Ball{
+				X:       msg.Width / 2,
+				Y:       msg.Height / 2,
+				Dx:      10,
+				Dy:      10,
+				Radius:  ballRadius,
+				Visible: true,
 			}
 
-			wsh.canvasVar.width = msg.Width
-			wsh.paddleVar.width = msg.PaddleWidth
-			wsh.paddleVar.height = msg.PaddleHeight
-			wsh.canvasVar.height = msg.Height
+			wsh.canvasVar.Width = msg.Width
+			wsh.paddleVar.Width = msg.PaddleWidth
+
+			wsh.paddleVar.Height = msg.PaddleHeight
+			wsh.canvasVar.Height = msg.Height
 
 			if !wsh.ballRunning && len(wsh.connections) > 1 {
 				wsh.ballRunning = true
@@ -222,50 +210,50 @@ func (wsh *webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		*/
 		client.sendQueue <- map[string]string{"status": "Message processed"}
 
-    var movement float64
-    		if msg.Direction == "up" {
+		var movement float64
+		if msg.Direction == "up" {
 			movement = -30
 		} else if msg.Direction == "down" {
 			movement = 30
 		}
 
-    wsh.mu.Lock()
-    if client.team == "left" {
-      newLeftPaddlePos := globalPaddlePositions.leftPaddle + movement
+		wsh.mu.Lock()
+		if client.team == "left" {
+			newLeftPaddlePos := globalPaddlePositions.leftPaddle + movement
 
-      if newLeftPaddlePos >= 0 && newLeftPaddlePos + wsh.paddleVar.height <= wsh.canvasVar.height {
-        globalPaddlePositions.leftPaddle = newLeftPaddlePos
-      }
+			if newLeftPaddlePos >= 0 && newLeftPaddlePos+wsh.paddleVar.Height <= wsh.canvasVar.Height {
+				globalPaddlePositions.leftPaddle = newLeftPaddlePos
+			}
 
-      wsh.leftPaddleData.movementSum += movement
-      if wsh.leftPaddleData.players > 0 {
-        wsh.leftPaddleData.position = wsh.leftPaddleData.movementSum / float64(wsh.leftPaddleData.players)
-        wsh.rightPaddleData.position = 0
-        wsh.leftPaddleData.movementSum = 0
-      } else {
-        wsh.leftPaddleData.position = 0
-        wsh.leftPaddleData.movementSum = 0
-      }
-    } else {
-      newRightPaddlePos := globalPaddlePositions.rightPaddle + movement
+			wsh.leftPaddleData.movementSum += movement
+			if wsh.leftPaddleData.players > 0 {
+				wsh.leftPaddleData.position = wsh.leftPaddleData.movementSum / float64(wsh.leftPaddleData.players)
+				wsh.rightPaddleData.position = 0
+				wsh.leftPaddleData.movementSum = 0
+			} else {
+				wsh.leftPaddleData.position = 0
+				wsh.leftPaddleData.movementSum = 0
+			}
+		} else {
+			newRightPaddlePos := globalPaddlePositions.rightPaddle + movement
 
-      if newRightPaddlePos >= 0 && newRightPaddlePos + wsh.paddleVar.height <= wsh.canvasVar.height {
-        globalPaddlePositions.rightPaddle = newRightPaddlePos
-      }
+			if newRightPaddlePos >= 0 && newRightPaddlePos+wsh.paddleVar.Height <= wsh.canvasVar.Height {
+				globalPaddlePositions.rightPaddle = newRightPaddlePos
+			}
 
-      wsh.rightPaddleData.movementSum += movement
-      if wsh.rightPaddleData.players > 0 {
-        wsh.rightPaddleData.position = wsh.rightPaddleData.movementSum / float64(wsh.rightPaddleData.players)
-        wsh.leftPaddleData.position = 0
-        wsh.rightPaddleData.movementSum = 0
-      } else {
-        wsh.rightPaddleData.position = 0
-        wsh.rightPaddleData.movementSum = 0
-      }
-    }
-    wsh.mu.Unlock()
+			wsh.rightPaddleData.movementSum += movement
+			if wsh.rightPaddleData.players > 0 {
+				wsh.rightPaddleData.position = wsh.rightPaddleData.movementSum / float64(wsh.rightPaddleData.players)
+				wsh.leftPaddleData.position = 0
+				wsh.rightPaddleData.movementSum = 0
+			} else {
+				wsh.rightPaddleData.position = 0
+				wsh.rightPaddleData.movementSum = 0
+			}
+		}
+		wsh.mu.Unlock()
 		wsh.broadcastPaddlePositions()
-  }
+	}
 }
 
 func (wsh *webSocketHandler) startBallUpdates() {
@@ -289,9 +277,9 @@ func (wsh *webSocketHandler) startBallUpdates() {
 		wsh.mu.Lock()
 		message := map[string]interface{}{
 			"ball": map[string]float64{
-				"x":      wsh.ballVar.x,
-				"y":      wsh.ballVar.y,
-				"radius": wsh.ballVar.radius,
+				"x":      wsh.ballVar.X,
+				"y":      wsh.ballVar.Y,
+				"radius": wsh.ballVar.Radius,
 			},
 		}
 		wsh.mu.Unlock()
@@ -362,119 +350,118 @@ func (wsh *webSocketHandler) updateBallPosition() {
 	defer wsh.mu.Unlock()
 
 	// update ball position
-	wsh.ballVar.x += wsh.ballVar.dx
-	wsh.ballVar.y += wsh.ballVar.dy
+	wsh.ballVar.X += wsh.ballVar.Dx
+	wsh.ballVar.Y += wsh.ballVar.Dy
 
-	maxWidth := wsh.canvasVar.width
-	maxHeight := wsh.canvasVar.height
-	ballRadius := wsh.ballVar.radius
+	maxWidth := wsh.canvasVar.Width
+	maxHeight := wsh.canvasVar.Height
+	ballRadius := wsh.ballVar.Radius
 
 	// wall collision (top & bottom)
-	if wsh.ballVar.y-ballRadius <= 0 || wsh.ballVar.y+ballRadius >= maxHeight {
-		wsh.ballVar.dy *= -1
+	if wsh.ballVar.Y-ballRadius <= 0 || wsh.ballVar.Y+ballRadius >= maxHeight {
+		wsh.ballVar.Dy *= -1
 	}
 
 	// wall collision (left & right)
-	if wsh.ballVar.x-ballRadius <= 0 || wsh.ballVar.x+ballRadius >= maxWidth {
-		wsh.ballVar.dx *= -1
+	if wsh.ballVar.X-ballRadius <= 0 || wsh.ballVar.X+ballRadius >= maxWidth {
+		wsh.ballVar.Dx *= -1
 	}
 
 	// paddle collision logic
 	wsh.checkPaddleCollision()
 }
 
-func(wsh *webSocketHandler) updatePaddlePositions(client *Client, direction string) {
-  wsh.mu.Lock()
-  defer wsh.mu.Unlock()
+func (wsh *webSocketHandler) updatePaddlePositions(client *Client, direction string) {
+	wsh.mu.Lock()
+	defer wsh.mu.Unlock()
 
-  var paddle *paddleData
-  var globalPosition *float64
+	var paddle *paddleData
+	var globalPosition *float64
 
-  if client.team == "left" {
-    paddle = &wsh.leftPaddleData
-    globalPosition = &globalPaddlePositions.leftPaddle
-  } else {
-    paddle = &wsh.leftPaddleData
-    globalPosition = &globalPaddlePositions.leftPaddle
-  }
+	if client.team == "left" {
+		paddle = &wsh.leftPaddleData
+		globalPosition = &globalPaddlePositions.leftPaddle
+	} else {
+		paddle = &wsh.leftPaddleData
+		globalPosition = &globalPaddlePositions.leftPaddle
+	}
 
-  if direction == "up" {
-    paddle.velocity -= acceleration
-  } else if direction == "down" {
-    paddle.velocity += acceleration
-  } else {
-    paddle.velocity *= friction
-  }
+	if direction == "up" {
+		paddle.velocity -= acceleration
+	} else if direction == "down" {
+		paddle.velocity += acceleration
+	} else {
+		paddle.velocity *= friction
+	}
 
-  if paddle.velocity > maxSpeed {
-    paddle.velocity = maxSpeed
-  } else if paddle.velocity < -maxSpeed {
-    paddle.velocity = -maxSpeed
-  }
-  
-  newPosition := *globalPosition + paddle.velocity
+	if paddle.velocity > maxSpeed {
+		paddle.velocity = maxSpeed
+	} else if paddle.velocity < -maxSpeed {
+		paddle.velocity = -maxSpeed
+	}
 
-  if newPosition < 0 {
-    newPosition = 0
-    paddle.velocity = 0
-  } else if newPosition+wsh.paddleVar.height > wsh.canvasVar.height {
-    newPosition = wsh.canvasVar.height - wsh.paddleVar.height
-    paddle.velocity = 0
-  }
+	newPosition := *globalPosition + paddle.velocity
 
-  paddle.movementSum += paddle.velocity
+	if newPosition < 0 {
+		newPosition = 0
+		paddle.velocity = 0
+	} else if newPosition+wsh.paddleVar.Height > wsh.canvasVar.Height {
+		newPosition = wsh.canvasVar.Height - wsh.paddleVar.Height
+		paddle.velocity = 0
+	}
 
-  if paddle.players >  0 {
-    paddle.position = paddle.movementSum / float64(paddle.players)
-    paddle.movementSum = 0
-  } else {
-    paddle.position = 0
-    paddle.movementSum = 0
-  }
+	paddle.movementSum += paddle.velocity
 
-  wsh.broadcastPaddlePositions()
+	if paddle.players > 0 {
+		paddle.position = paddle.movementSum / float64(paddle.players)
+		paddle.movementSum = 0
+	} else {
+		paddle.position = 0
+		paddle.movementSum = 0
+	}
+
+	wsh.broadcastPaddlePositions()
 }
 
 // broken and stuff how to fix this thi
 func (wsh *webSocketHandler) checkPaddleCollision() {
-	ballRadius := wsh.ballVar.radius
+	ballRadius := wsh.ballVar.Radius
 
-	leftPaddleRight := wsh.paddleVar.width
+	leftPaddleRight := wsh.paddleVar.Width
 	leftPaddleTop := float64(globalPaddlePositions.leftPaddle)
-	leftPaddleBottom := leftPaddleTop + float64(wsh.paddleVar.height)
+	leftPaddleBottom := leftPaddleTop + float64(wsh.paddleVar.Height)
 
-
-	rightPaddleLeft := wsh.canvasVar.width - wsh.paddleVar.width
+	rightPaddleLeft := wsh.canvasVar.Width - wsh.paddleVar.Width
 	rightPaddleTop := float64(globalPaddlePositions.rightPaddle)
-	rightPaddleBottom := rightPaddleTop + float64(wsh.paddleVar.height)
+	rightPaddleBottom := rightPaddleTop + float64(wsh.paddleVar.Height)
 
-	ballSpeed := math.Hypot(wsh.ballVar.dx, wsh.ballVar.dy)
+	ballSpeed := math.Hypot(wsh.ballVar.Dx, wsh.ballVar.Dy)
 	maxBounceAngle := math.Pi / 3 // 60 degrees max
 
-	if wsh.ballVar.x-ballRadius <= leftPaddleRight &&
-		wsh.ballVar.y >= leftPaddleTop &&
-		wsh.ballVar.y <= leftPaddleBottom {
-      log.Println("collision with the left paddle detected")
-   
-      relativePosition := (wsh.ballVar.y - (leftPaddleTop + float64(wsh.paddleVar.height)/2)) / (float64(wsh.paddleVar.height) / 2)
-      bounceAngle := relativePosition * maxBounceAngle
-      wsh.ballVar.dx = math.Abs(ballSpeed * math.Cos(bounceAngle))
-      wsh.ballVar.dy = ballSpeed * math.Sin(bounceAngle)
-      wsh.ballVar.dy += randomVariation()
-      wsh.ballVar.x = leftPaddleRight + ballRadius
-    }
+	if wsh.ballVar.X-ballRadius <= leftPaddleRight &&
+		wsh.ballVar.Y >= leftPaddleTop &&
+		wsh.ballVar.Y <= leftPaddleBottom {
+		log.Println("collision with the left paddle detected")
 
-	if wsh.ballVar.x+ballRadius >= rightPaddleLeft &&
-		wsh.ballVar.y >= rightPaddleTop &&
-		wsh.ballVar.y <= rightPaddleBottom {
-      log.Println("collision with the right paddle detected")
-      relativePosition := (wsh.ballVar.y - (rightPaddleTop + float64(wsh.paddleVar.height)/2)) / (float64(wsh.paddleVar.height) / 2)
-      bounceAngle := relativePosition * maxBounceAngle
-      wsh.ballVar.dx = -math.Abs(ballSpeed * math.Cos(bounceAngle))
-      wsh.ballVar.dy = ballSpeed * math.Sin(bounceAngle)
-      wsh.ballVar.dy += randomVariation()
-      wsh.ballVar.x = rightPaddleLeft - ballRadius
-    }
+		relativePosition := (wsh.ballVar.Y - (leftPaddleTop + float64(wsh.paddleVar.Height)/2)) / (float64(wsh.paddleVar.Height) / 2)
+		bounceAngle := relativePosition * maxBounceAngle
+		wsh.ballVar.Dx = math.Abs(ballSpeed * math.Cos(bounceAngle))
+		wsh.ballVar.Dy = ballSpeed * math.Sin(bounceAngle)
+		wsh.ballVar.Dy += randomVariation()
+		wsh.ballVar.X = leftPaddleRight + ballRadius
+	}
+
+	if wsh.ballVar.X+ballRadius >= rightPaddleLeft &&
+		wsh.ballVar.Y >= rightPaddleTop &&
+		wsh.ballVar.Y <= rightPaddleBottom {
+		log.Println("collision with the right paddle detected")
+		relativePosition := (wsh.ballVar.Y - (rightPaddleTop + float64(wsh.paddleVar.Height)/2)) / (float64(wsh.paddleVar.Height) / 2)
+		bounceAngle := relativePosition * maxBounceAngle
+		wsh.ballVar.Dx = -math.Abs(ballSpeed * math.Cos(bounceAngle))
+		wsh.ballVar.Dy = ballSpeed * math.Sin(bounceAngle)
+		wsh.ballVar.Dy += randomVariation()
+		wsh.ballVar.X = rightPaddleLeft - ballRadius
+	}
 }
 
 func randomVariation() float64 {
@@ -482,11 +469,11 @@ func randomVariation() float64 {
 }
 
 func (wsh *webSocketHandler) resetBall() {
-	wsh.ballVar.x = wsh.canvasVar.width / 2
-	wsh.ballVar.y = wsh.canvasVar.height / 2
+	wsh.ballVar.X = wsh.canvasVar.Width / 2
+	wsh.ballVar.Y = wsh.canvasVar.Height / 2
 
 	// reverse the direction randomly for variation
-	wsh.ballVar.dx = -wsh.ballVar.dx
+	wsh.ballVar.Dx = -wsh.ballVar.Dx
 }
 
 func main() {

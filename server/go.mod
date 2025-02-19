@@ -1,4 +1,4 @@
-module github.com/mo-shahab/go-websocket
+module github.com/mo-shahab/go-pong
 
 go 1.23.5
 
