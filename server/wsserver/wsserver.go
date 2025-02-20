@@ -240,7 +240,6 @@ func (wsh *WebSocketHandler) updatePaddlePositions(client *Client, direction str
 	wsh.broadcastPaddlePositions()
 }
 
-// broken and stuff how to fix this thi
 func (wsh *WebSocketHandler) checkPaddleCollision() {
 	ballRadius := wsh.BallVar.Radius
 
@@ -309,7 +308,6 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		id:        clientId,
 	}
 
-	// testing syncro
 	log.Println("global paddle positions", globalPaddlePositions)
 
 	// a message queue, that sends the data to the client
@@ -327,35 +325,13 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	wsh.Mu.Lock()
 
-	if len(wsh.Connections) == 0 {
-		wsh.LeftPaddleData.position = globalPaddlePositions.leftPaddle
-		wsh.RightPaddleData.position = globalPaddlePositions.rightPaddle
-		wsh.BallRunning = false
-		wsh.BallVisible = false
-	}
-
-	if len(wsh.Connections)%2 == 0 {
-		client.team = "left"
-		wsh.LeftPaddleData.players++
-	} else {
-		client.team = "right"
-		wsh.RightPaddleData.players++
-	}
-
 	wsh.Connections[clientId] = client
 	wsh.ConnToId[conn] = clientId
 
 	log.Println("Total number of connections: ", len(wsh.Connections))
 	wsh.Mu.Unlock()
 
-	initialGameState := map[string]interface{}{
-		"leftPaddleData":  globalPaddlePositions.leftPaddle,
-		"rightPaddleData": globalPaddlePositions.rightPaddle,
-		"yourTeam":        client.team,
-		"clients":         len(wsh.Connections),
-	}
-
-	client.sendQueue <- initialGameState
+	var initialized bool
 
 	// Handle incoming messages
 	for {
@@ -369,15 +345,13 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		//log.Printf("Message received: %s", p)
 
 		var msg struct {
-			Type            string  `json:"type"`
-			Direction       string  `json:"direction"`
-			Paddle          string  `json:"paddle"`
-			InitLeftPaddle  float64 `json:"initLeftPaddle"`
-			InitRightPaddle float64 `json:"initRightPaddle"`
-			Width           float64 `json:width,omitempty`
-			Height          float64 `json:height,omitempty`
-			PaddleHeight    float64 `json:paddleHeight,omitempty`
-			PaddleWidth     float64 `json:paddleWidth,omitempty`
+			Type         string  `json:"type"`
+			Direction    string  `json:"direction"`
+			Paddle       string  `json:"paddle"`
+			Width        float64 `json:width`
+			Height       float64 `json:height`
+			PaddleHeight float64 `json:paddleHeight`
+			PaddleWidth  float64 `json:paddleWidth`
 		}
 
 		err = json.Unmarshal(p, &msg)
@@ -388,53 +362,69 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		if msg.Width > 0 && msg.Height > 0 {
+		log.Println("this is the width from the message", msg.Width)
+		log.Println("this is the height form the message", msg.Height)
+
+		if !initialized && msg.Width > 0 && msg.Height > 0 {
 			wsh.Mu.Lock()
+
+			if len(wsh.Connections)%2 == 0 {
+				client.team = "left"
+				wsh.LeftPaddleData.players++
+			} else {
+				client.team = "right"
+				wsh.RightPaddleData.players++
+			}
+
 			wsh.BallVar = ball.Ball{
 				X:       msg.Width / 2,
 				Y:       msg.Height / 2,
-				Dx:      10,
-				Dy:      10,
+				Dx:      -10,
+				Dy:      0,
 				Radius:  ballRadius,
 				Visible: true,
 			}
 
+			log.Println(wsh.BallVar)
+
 			wsh.CanvasVar.Width = msg.Width
 			wsh.PaddleVar.Width = msg.PaddleWidth
-
 			wsh.PaddleVar.Height = msg.PaddleHeight
 			wsh.CanvasVar.Height = msg.Height
+
+			globalPaddlePositions.leftPaddle = wsh.LeftPaddleData.position
+			globalPaddlePositions.rightPaddle = wsh.RightPaddleData.position
+
+			if len(wsh.Connections) == 1 {
+				wsh.LeftPaddleData.position = (msg.Height / 2) - (msg.PaddleHeight / 2)
+				wsh.RightPaddleData.position = (msg.Height / 2) - (msg.PaddleHeight / 2)
+				wsh.BallRunning = false
+				wsh.BallVisible = false
+			}
 
 			if !wsh.BallRunning && len(wsh.Connections) > 1 {
 				wsh.BallRunning = true
 				go wsh.startBallUpdates()
 			}
+
 			wsh.Mu.Unlock()
+			initialized = true
+
+			initialGameState := map[string]interface{}{
+				"leftPaddleData":  wsh.LeftPaddleData.position,
+				"rightPaddleData": wsh.RightPaddleData.position,
+				"yourTeam":        client.team,
+				"clients":         len(wsh.Connections),
+			}
+
+			log.Println(initialGameState)
+
+			client.sendQueue <- initialGameState
+
+			continue
+
 		}
 
-		// Validate message
-		/*
-					valid := true
-					if msg.Type != "move" || msg.Type != "init" {
-						log.Println("Invalid type:", msg.Type)
-						valid = false
-					}
-
-			    if msg.Type == "move" {
-			      if msg.Direction != "up" && msg.Direction != "down" {
-			        log.Println("Invalid direction:", msg.Direction)
-			        valid = false
-			      }
-			    }
-
-					if !valid {
-						log.Println("Invalid message received")
-						client.sendQueue <- map[string]string{"error": "Invalid message parameters"}
-						continue
-					}
-
-					log.Printf("Valid message received: %+v\n", msg)
-		*/
 		client.sendQueue <- map[string]string{"status": "Message processed"}
 
 		var movement float64

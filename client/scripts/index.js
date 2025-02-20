@@ -12,8 +12,11 @@ const gameHeight = canvas.height;
 const paddleWidth = gameWidth * 0.01;
 const paddleHeight = gameHeight * 0.15; 
 
-let leftPaddleY = 0
-let rightPaddleY = 0
+let leftPaddleY; 
+let rightPaddleY;
+
+//let leftPaddleY = 0
+//let rightPaddleY = 0
 
 let ballX = gameWidth / 2;
 let ballY = gameHeight / 2;
@@ -42,11 +45,11 @@ socket.onopen = () => {
     type: "init",
     width: gameWidth,
     height: gameHeight,
-    initLeftPaddle: leftPaddleY,
-    initRightPaddle: rightPaddleY,
     paddleHeight: paddleHeight,
     paddleWidth: paddleWidth,
   }
+
+  console.log(initData);
     
   socket.send(JSON.stringify(initData));
 };
@@ -55,13 +58,26 @@ socket.onmessage = (event) => {
   const data = JSON.parse(event.data);
 
   if (data.leftPaddleData !== undefined) {
-    leftPaddleY = Math.max(0, Math.min(leftPaddleY + data.leftPaddleData, gameHeight - paddleHeight));
+    // If leftPaddleY is undefined, initialize it
+    if (leftPaddleY === undefined) {
+      console.log("this block worked");
+      console.log(leftPaddleY)
+      leftPaddleY = data.leftPaddleData;
+    } else {
+      leftPaddleY = Math.max(0, Math.min(leftPaddleY + data.leftPaddleData, gameHeight - paddleHeight));
+    }
   }
 
   if (data.rightPaddleData !== undefined) {
-    rightPaddleY = Math.max(0, Math.min(rightPaddleY + data.rightPaddleData, gameHeight - paddleHeight));
+    // If rightPaddleY is undefined, initialize it
+    if (rightPaddleY === undefined) {
+      console.log(rightPaddleY)
+      console.log("this block worked");
+      rightPaddleY = data.rightPaddleData;
+    } else {
+      rightPaddleY = Math.max(0, Math.min(rightPaddleY + data.rightPaddleData, gameHeight - paddleHeight));
+    }
   }
-
   if (data.ball) {
     ballX = data.ball.x;
     ballY = data.ball.y;
