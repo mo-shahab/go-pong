@@ -12,8 +12,8 @@ const gameHeight = canvas.height;
 const paddleWidth = gameWidth * 0.01;
 const paddleHeight = gameHeight * 0.15; 
 
-let leftPaddleY = 0;
-let rightPaddleY = 0;
+let leftPaddleY = 0
+let rightPaddleY = 0
 
 let ballX = gameWidth / 2;
 let ballY = gameHeight / 2;
@@ -42,6 +42,8 @@ socket.onopen = () => {
     type: "init",
     width: gameWidth,
     height: gameHeight,
+    initLeftPaddle: leftPaddleY,
+    initRightPaddle: rightPaddleY,
     paddleHeight: paddleHeight,
     paddleWidth: paddleWidth,
   }

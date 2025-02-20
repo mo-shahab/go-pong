@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"github.com/gorilla/websocket"
 	"github.com/mo-shahab/go-pong/ball"
-	"github.com/mo-shahab/go-pong/paddle"
 	"github.com/mo-shahab/go-pong/canvas"
+	"github.com/mo-shahab/go-pong/paddle"
 	"log"
 	"math"
 	"math/rand"
@@ -37,6 +37,8 @@ type WebSocketHandler struct {
 	Upgrader        websocket.Upgrader
 	LeftPaddleData  paddleData
 	RightPaddleData paddleData
+	InitLeftPaddle  float64
+	InitRightPaddle float64
 	BallVar         ball.Ball
 	CanvasVar       canvas.Canvas
 	PaddleVar       paddle.Paddle
@@ -50,7 +52,7 @@ type WebSocketHandler struct {
 // ball constants
 const (
 	initialBallDx = 20
-	initialBallDy = 20
+	initialBallDy = 0
 	ballRadius    = 8
 )
 
@@ -133,7 +135,7 @@ func (wsh *WebSocketHandler) broadcastPaddlePositions() {
 
 	// Prepare game state with current paddle positions
 	gameState := map[string]float64{
-		"LeftPaddleData":  wsh.LeftPaddleData.position,
+		"leftPaddleData":  wsh.LeftPaddleData.position,
 		"rightPaddleData": wsh.RightPaddleData.position,
 	}
 
@@ -197,8 +199,8 @@ func (wsh *WebSocketHandler) updatePaddlePositions(client *Client, direction str
 		paddle = &wsh.LeftPaddleData
 		globalPosition = &globalPaddlePositions.leftPaddle
 	} else {
-		paddle = &wsh.LeftPaddleData
-		globalPosition = &globalPaddlePositions.leftPaddle
+		paddle = &wsh.RightPaddleData
+		globalPosition = &globalPaddlePositions.rightPaddle
 	}
 
 	if direction == "up" {
@@ -256,7 +258,7 @@ func (wsh *WebSocketHandler) checkPaddleCollision() {
 	if wsh.BallVar.X-ballRadius <= leftPaddleRight &&
 		wsh.BallVar.Y >= leftPaddleTop &&
 		wsh.BallVar.Y <= leftPaddleBottom {
-		log.Println("collision with the left paddle detected")
+		log.Println("collision with the left paddle detected, paddle height top and bottom", leftPaddleTop, leftPaddleBottom)
 
 		relativePosition := (wsh.BallVar.Y - (leftPaddleTop + float64(wsh.PaddleVar.Height)/2)) / (float64(wsh.PaddleVar.Height) / 2)
 		bounceAngle := relativePosition * maxBounceAngle
@@ -269,7 +271,8 @@ func (wsh *WebSocketHandler) checkPaddleCollision() {
 	if wsh.BallVar.X+ballRadius >= rightPaddleLeft &&
 		wsh.BallVar.Y >= rightPaddleTop &&
 		wsh.BallVar.Y <= rightPaddleBottom {
-		log.Println("collision with the right paddle detected")
+		log.Println("collision with the right paddle detected, paddle height top and bottom", rightPaddleTop, rightPaddleBottom)
+
 		relativePosition := (wsh.BallVar.Y - (rightPaddleTop + float64(wsh.PaddleVar.Height)/2)) / (float64(wsh.PaddleVar.Height) / 2)
 		bounceAngle := relativePosition * maxBounceAngle
 		wsh.BallVar.Dx = -math.Abs(ballSpeed * math.Cos(bounceAngle))
@@ -306,8 +309,8 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		id:        clientId,
 	}
 
-	globalPaddlePositions.leftPaddle = (wsh.CanvasVar.Height / 2) - (wsh.PaddleVar.Height / 2)
-	globalPaddlePositions.rightPaddle = (wsh.CanvasVar.Height / 2) - (wsh.PaddleVar.Height / 2)
+	// testing syncro
+	log.Println("global paddle positions", globalPaddlePositions)
 
 	// a message queue, that sends the data to the client
 	go func() {
@@ -325,8 +328,6 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wsh.Mu.Lock()
 
 	if len(wsh.Connections) == 0 {
-		globalPaddlePositions.leftPaddle = (wsh.CanvasVar.Height / 2) - (wsh.PaddleVar.Height / 2)
-		globalPaddlePositions.rightPaddle = (wsh.CanvasVar.Height / 2) - (wsh.PaddleVar.Height / 2)
 		wsh.LeftPaddleData.position = globalPaddlePositions.leftPaddle
 		wsh.RightPaddleData.position = globalPaddlePositions.rightPaddle
 		wsh.BallRunning = false
@@ -351,6 +352,7 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"leftPaddleData":  globalPaddlePositions.leftPaddle,
 		"rightPaddleData": globalPaddlePositions.rightPaddle,
 		"yourTeam":        client.team,
+		"clients":         len(wsh.Connections),
 	}
 
 	client.sendQueue <- initialGameState
@@ -364,16 +366,18 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		log.Printf("Message received: %s", p)
+		//log.Printf("Message received: %s", p)
 
 		var msg struct {
-			Type         string  `json:"type"`
-			Direction    string  `json:"direction"`
-			Paddle       string  `json:"paddle"`
-			Width        float64 `json:width,omitempty`
-			Height       float64 `json:height,omitempty`
-			PaddleHeight float64 `json:paddleHeight,omitempty`
-			PaddleWidth  float64 `json:paddleWidth,omitempty`
+			Type            string  `json:"type"`
+			Direction       string  `json:"direction"`
+			Paddle          string  `json:"paddle"`
+			InitLeftPaddle  float64 `json:"initLeftPaddle"`
+			InitRightPaddle float64 `json:"initRightPaddle"`
+			Width           float64 `json:width,omitempty`
+			Height          float64 `json:height,omitempty`
+			PaddleHeight    float64 `json:paddleHeight,omitempty`
+			PaddleWidth     float64 `json:paddleWidth,omitempty`
 		}
 
 		err = json.Unmarshal(p, &msg)
@@ -441,6 +445,7 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		wsh.Mu.Lock()
+		log.Println("updates of global positions, left paddle and right paddle  ", globalPaddlePositions, wsh.LeftPaddleData.position, wsh.RightPaddleData.position)
 		if client.team == "left" {
 			newLeftPaddlePos := globalPaddlePositions.leftPaddle + movement
 

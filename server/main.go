@@ -1,13 +1,13 @@
 package main
 
 import (
+	"github.com/mo-shahab/go-pong/wsserver"
 	"log"
 	"net/http"
-  "github.com/mo-shahab/go-pong/wsserver"
 )
 
 func main() {
-	wsh := wsserver.NewWebSocketHandler();
+	wsh := wsserver.NewWebSocketHandler()
 	fs := http.FileServer(http.Dir("../client/"))
 
 	http.Handle("/", fs)
