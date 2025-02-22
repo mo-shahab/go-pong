@@ -1,0 +1,6 @@
+To test run the python script after installing necessary packages, or you can
+try executing the js file, both do exactly same task. NOTE: JS-TEST-CLIENT.JS
+cannot run in the nodejs runtime. To run test the working of the game, using
+that file would require you to embed the script in the browser. 
+
+      shahab
