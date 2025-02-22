@@ -60,22 +60,26 @@ socket.onmessage = (event) => {
   if (data.leftPaddleData !== undefined) {
     // If leftPaddleY is undefined, initialize it
     if (leftPaddleY === undefined) {
-      console.log("this block worked");
-      console.log(leftPaddleY)
       leftPaddleY = data.leftPaddleData;
     } else {
-      leftPaddleY = Math.max(0, Math.min(leftPaddleY + data.leftPaddleData, gameHeight - paddleHeight));
+      if(data.clients < 2) {
+        leftPaddleY = Math.max(0, Math.min(leftPaddleY + data.leftPaddleData, gameHeight - paddleHeight));
+      } else {
+        leftPaddleY = data.leftPaddleData
+      }
     }
   }
 
   if (data.rightPaddleData !== undefined) {
     // If rightPaddleY is undefined, initialize it
     if (rightPaddleY === undefined) {
-      console.log(rightPaddleY)
-      console.log("this block worked");
       rightPaddleY = data.rightPaddleData;
     } else {
-      rightPaddleY = Math.max(0, Math.min(rightPaddleY + data.rightPaddleData, gameHeight - paddleHeight));
+      if(data.clients < 2) {
+        rightPaddleY = Math.max(0, Math.min(rightPaddleY + data.rightPaddleData, gameHeight - paddleHeight));
+      } else {
+        rightPaddleY = data.rightPaddleData
+      }
     }
   }
   if (data.ball) {

@@ -135,8 +135,8 @@ func (wsh *WebSocketHandler) broadcastPaddlePositions() {
 
 	// Prepare game state with current paddle positions
 	gameState := map[string]float64{
-		"leftPaddleData":  wsh.LeftPaddleData.position,
-		"rightPaddleData": wsh.RightPaddleData.position,
+		"leftPaddleData":  globalPaddlePositions.leftPaddle,
+		"rightPaddleData": globalPaddlePositions.rightPaddle,
 	}
 
 	for _, client := range wsh.Connections {
@@ -293,6 +293,9 @@ func (wsh *WebSocketHandler) resetBall() {
 	wsh.BallVar.Dx = -wsh.BallVar.Dx
 }
 
+var initialized bool
+var gameRunning bool
+
 func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	conn, err := wsh.Upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -302,13 +305,37 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	clientId := conn.RemoteAddr().String() + "_" + time.Now().String()
 
+
+
 	client := &Client{
 		conn:      conn,
 		sendQueue: make(chan interface{}, 100), // Increased buffer size
 		id:        clientId,
 	}
 
-	log.Println("global paddle positions", globalPaddlePositions)
+  if len(wsh.Connections) < 2 {
+    log.Println("Total number of connections: ", len(wsh.Connections))
+    log.Println("team assigned")
+    if len(wsh.Connections)%2 == 0 {
+      client.team = "left"
+      wsh.LeftPaddleData.players++
+    } else {
+      client.team = "right"
+      wsh.RightPaddleData.players++
+    }
+  } else {
+    log.Println("Total number of connections: ", len(wsh.Connections))
+    log.Println("more than 2 players")
+    randomNumber := rand.Intn(100)  
+    log.Println("this is the randomNumber", randomNumber)
+    if randomNumber % 2 == 0 {
+      client.team = "left"
+    } else {
+      client.team = "right"
+    }
+  }
+
+  log.Println("this is the client", client.id, client.team)
 
 	// a message queue, that sends the data to the client
 	go func() {
@@ -328,10 +355,8 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wsh.Connections[clientId] = client
 	wsh.ConnToId[conn] = clientId
 
-	log.Println("Total number of connections: ", len(wsh.Connections))
 	wsh.Mu.Unlock()
 
-	var initialized bool
 
 	// Handle incoming messages
 	for {
@@ -362,19 +387,8 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		log.Println("this is the width from the message", msg.Width)
-		log.Println("this is the height form the message", msg.Height)
-
 		if !initialized && msg.Width > 0 && msg.Height > 0 {
 			wsh.Mu.Lock()
-
-			if len(wsh.Connections)%2 == 0 {
-				client.team = "left"
-				wsh.LeftPaddleData.players++
-			} else {
-				client.team = "right"
-				wsh.RightPaddleData.players++
-			}
 
 			wsh.BallVar = ball.Ball{
 				X:       msg.Width / 2,
@@ -385,7 +399,7 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Visible: true,
 			}
 
-			log.Println(wsh.BallVar)
+      //log.Println("global paddle positions", globalPaddlePositions)
 
 			wsh.CanvasVar.Width = msg.Width
 			wsh.PaddleVar.Width = msg.PaddleWidth
@@ -408,7 +422,11 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 
 			wsh.Mu.Unlock()
-			initialized = true
+
+      if len(wsh.Connections ) == 2{
+        initialized = true
+        gameRunning = true
+      }
 
 			initialGameState := map[string]interface{}{
 				"leftPaddleData":  wsh.LeftPaddleData.position,
@@ -417,8 +435,7 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"clients":         len(wsh.Connections),
 			}
 
-			log.Println(initialGameState)
-
+      log.Println("even after the game is initialized it still enters this block", initialized)
 			client.sendQueue <- initialGameState
 
 			continue
@@ -426,6 +443,18 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		client.sendQueue <- map[string]string{"status": "Message processed"}
+
+    if(gameRunning && initialized){
+      log.Println("game is running")
+      /*
+			gameState := map[string]interface{}{
+				"leftPaddleData":  globalPaddlePositions,
+				"rightPaddleData": wsh.RightPaddleData.position,
+				"yourTeam":        client.team,
+				"clients":         len(wsh.Connections),
+			}
+      */
+    }
 
 		var movement float64
 		if msg.Direction == "up" {
