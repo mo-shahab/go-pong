@@ -199,19 +199,19 @@ func (wsh *WebSocketHandler) updateBallPosition() {
 }
 
 // checks for if the ball is out of bounds
-func (wsh *WebSocketHandler) checkBallOutOfBounds() bool {
+func (wsh *WebSocketHandler) checkBallOutOfBounds() {
   wsh.Mu.Lock()
-  defer wsh.Mu.Unlock()
 
   ballRadius := wsh.BallVar.Radius
   scored := false
+  scoreUpdate := map[string]interface{}{}
 
   // ball colliding with the left wall
   if wsh.BallVar.X - ballRadius <= 0 {
     // Right players score
     wsh.Scores.RightScores++
     log.Println("Right Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
-    //wsh.resetBallWithDirection(1)
+    wsh.resetBallWithDirection(1)
     scored = true
   }
 
@@ -220,23 +220,25 @@ func (wsh *WebSocketHandler) checkBallOutOfBounds() bool {
     // Left players score
     wsh.Scores.LeftScores++
     log.Println("Left Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
-    //wsh.resetBallWithDirection(-1)
+    wsh.resetBallWithDirection(-1)
     scored = true
   }
 
   if scored {
-    scoreUpdate := map[string]interface{}{
+    scoreUpdate = map[string]interface{}{
       "type": "score",
-      "leftScores":  wsh.Scores.LeftScores,
-      "rightScores": wsh.Scores.RightScores,
+      "leftScore": wsh.Scores.LeftScores,
+      "rightScore": wsh.Scores.RightScores,
     }
-
-    wsh.Mu.Lock()
-    wsh.broadcastToAll(scoreUpdate)
-    wsh.Mu.Unlock()
   }
 
-  return scored
+  // Release the lock before broadcasting
+  wsh.Mu.Unlock()
+  
+  // Broadcast outside of the lock if we scored
+  if scored {
+    wsh.broadcastToAll(scoreUpdate)
+  }
 } 
 
 // after when the ball is collided with the ends
