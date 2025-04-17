@@ -6,6 +6,7 @@ import (
 	"github.com/mo-shahab/go-pong/ball"
 	"github.com/mo-shahab/go-pong/canvas"
 	"github.com/mo-shahab/go-pong/paddle"
+	"github.com/mo-shahab/go-pong/scores"
 	"log"
 	"math"
 	"math/rand"
@@ -47,6 +48,7 @@ type WebSocketHandler struct {
 	ConnToId        map[*websocket.Conn]string
 	BallRunning     bool
 	BallVisible     bool
+	Scores     scores.Scores
 }
 
 // ball constants
@@ -83,7 +85,7 @@ func (wsh *WebSocketHandler) startBallUpdates() {
 
 		wsh.Mu.Lock()
 		if len(wsh.Connections) == 0 {
-			log.Println("No active connections, skipping update") // Debugging log
+			//log.Println("No active connections, skipping update") // Debugging log
 			wsh.Mu.Unlock()
 			continue
 		}
@@ -164,13 +166,12 @@ func (wsh *WebSocketHandler) broadcastToAll(message interface{}) {
 
 func (wsh *WebSocketHandler) updateBallPosition() {
 	wsh.Mu.Lock()
-	defer wsh.Mu.Unlock()
 
 	// update ball position
 	wsh.BallVar.X += wsh.BallVar.Dx
 	wsh.BallVar.Y += wsh.BallVar.Dy
 
-	maxWidth := wsh.CanvasVar.Width
+	// maxWidth := wsh.CanvasVar.Width
 	maxHeight := wsh.CanvasVar.Height
 	ballRadius := wsh.BallVar.Radius
 
@@ -179,13 +180,74 @@ func (wsh *WebSocketHandler) updateBallPosition() {
 		wsh.BallVar.Dy *= -1
 	}
 
-	// wall collision (left & right)
-	if wsh.BallVar.X-ballRadius <= 0 || wsh.BallVar.X+ballRadius >= maxWidth {
-		wsh.BallVar.Dx *= -1
-	}
+  
+/*
+  --DEPRECATED-- (now since scoring is there, this dont make sense)
+
+  if wsh.BallVar.X-ballRadius <= 0 || wsh.BallVar.X+ballRadius >= maxWidth {
+  wsh.BallVar.Dx *= -1
+  }
+
+*/
 
 	// paddle collision logic
-	wsh.checkPaddleCollision()
+	wsh.handlePaddleCollision()
+	wsh.Mu.Unlock()
+
+  // check if there is any scoring
+  wsh.checkBallOutOfBounds()
+}
+
+// checks for if the ball is out of bounds
+func (wsh *WebSocketHandler) checkBallOutOfBounds() bool {
+  wsh.Mu.Lock()
+  defer wsh.Mu.Unlock()
+
+  ballRadius := wsh.BallVar.Radius
+  scored := false
+
+  // ball colliding with the left wall
+  if wsh.BallVar.X - ballRadius <= 0 {
+    // Right players score
+    wsh.Scores.RightScores++
+    log.Println("Right Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
+    //wsh.resetBallWithDirection(1)
+    scored = true
+  }
+
+  // ball colliding with the left wall
+  if wsh.BallVar.X + ballRadius >= wsh.CanvasVar.Width {
+    // Left players score
+    wsh.Scores.LeftScores++
+    log.Println("Left Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
+    //wsh.resetBallWithDirection(-1)
+    scored = true
+  }
+
+  if scored {
+    scoreUpdate := map[string]interface{}{
+      "type": "score",
+      "leftScores":  wsh.Scores.LeftScores,
+      "rightScores": wsh.Scores.RightScores,
+    }
+
+    wsh.Mu.Lock()
+    wsh.broadcastToAll(scoreUpdate)
+    wsh.Mu.Unlock()
+  }
+
+  return scored
+} 
+
+// after when the ball is collided with the ends
+// this function is breaking for some reason 
+func (wsh *WebSocketHandler) resetBallWithDirection(directionX int){
+  wsh.BallVar.X = wsh.CanvasVar.Width / 2
+  wsh.BallVar.Y = wsh.CanvasVar.Height / 2
+
+  baseSpeed := 10
+  wsh.BallVar.Dx = float64(directionX) * float64(baseSpeed)
+  wsh.BallVar.Dy = (rand.Float64() - 0.5) * 5.0
 }
 
 func (wsh *WebSocketHandler) updatePaddlePositions(client *Client, direction string) {
@@ -240,7 +302,7 @@ func (wsh *WebSocketHandler) updatePaddlePositions(client *Client, direction str
 	wsh.broadcastPaddlePositions()
 }
 
-func (wsh *WebSocketHandler) checkPaddleCollision() {
+func (wsh *WebSocketHandler) handlePaddleCollision() {
 	ballRadius := wsh.BallVar.Radius
 
 	leftPaddleRight := wsh.PaddleVar.Width
@@ -257,7 +319,7 @@ func (wsh *WebSocketHandler) checkPaddleCollision() {
 	if wsh.BallVar.X-ballRadius <= leftPaddleRight &&
 		wsh.BallVar.Y >= leftPaddleTop &&
 		wsh.BallVar.Y <= leftPaddleBottom {
-		log.Println("collision with the left paddle detected, paddle height top and bottom", leftPaddleTop, leftPaddleBottom)
+		//log.Println("collision with the left paddle detected, paddle height top and bottom", leftPaddleTop, leftPaddleBottom)
 
 		relativePosition := (wsh.BallVar.Y - (leftPaddleTop + float64(wsh.PaddleVar.Height)/2)) / (float64(wsh.PaddleVar.Height) / 2)
 		bounceAngle := relativePosition * maxBounceAngle
@@ -270,7 +332,7 @@ func (wsh *WebSocketHandler) checkPaddleCollision() {
 	if wsh.BallVar.X+ballRadius >= rightPaddleLeft &&
 		wsh.BallVar.Y >= rightPaddleTop &&
 		wsh.BallVar.Y <= rightPaddleBottom {
-		log.Println("collision with the right paddle detected, paddle height top and bottom", rightPaddleTop, rightPaddleBottom)
+		//log.Println("collision with the right paddle detected, paddle height top and bottom", rightPaddleTop, rightPaddleBottom)
 
 		relativePosition := (wsh.BallVar.Y - (rightPaddleTop + float64(wsh.PaddleVar.Height)/2)) / (float64(wsh.PaddleVar.Height) / 2)
 		bounceAngle := relativePosition * maxBounceAngle
@@ -280,6 +342,20 @@ func (wsh *WebSocketHandler) checkPaddleCollision() {
 		wsh.BallVar.X = rightPaddleLeft - ballRadius
 	}
 }
+
+/*
+  write a function to check if the ball missed the paddles and has hit the ends
+  of the canvas, the most basic approach for this would be to check if the ball
+  has hit the left or right side of the canvas, if so, reset the ball to the
+  center of the canvas and reverse its direction. later we will have to also
+  consider the fact that the paddles are there, so we have to see for the paddle
+  positions and check if the ball has hit the paddle, but lets just do this
+  right, we can just check if the ball has hit the left or right end, because
+  anyway it will hit the paddle we just have to write a simple function to see if
+  the ball has hit the ends that is it for now, if it does then  reset the ball
+  to the original position
+*/
+
 
 func randomVariation() float64 {
 	return (rand.Float64() - 0.5) * 2
@@ -464,7 +540,7 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		wsh.Mu.Lock()
-		log.Println("updates of global positions, left paddle and right paddle  ", globalPaddlePositions, wsh.LeftPaddleData.position, wsh.RightPaddleData.position)
+		//log.Println("updates of global positions, left paddle and right paddle  ", globalPaddlePositions, wsh.LeftPaddleData.position, wsh.RightPaddleData.position)
 		if client.team == "left" {
 			newLeftPaddlePos := globalPaddlePositions.leftPaddle + movement
 

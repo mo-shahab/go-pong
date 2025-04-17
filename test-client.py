@@ -2,6 +2,7 @@ import asyncio
 import websockets
 import json
 import random
+import time
 
 URL = "ws://localhost:8080/ws"
 TOTAL_CONNECTIONS = 2 
@@ -18,6 +19,7 @@ async def connect_websocket(index):
                 direction = "up" if random_number % 2 == 0 else "down"
                 send_message = { "type": "move", "direction": direction}
                 await ws.send(json.dumps(send_message))
+                time.sleep(2)
     except Exception as e:
         print(f"Error on WebSocket {index}: {e}")
 
