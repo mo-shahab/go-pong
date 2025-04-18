@@ -48,7 +48,7 @@ type WebSocketHandler struct {
 	ConnToId        map[*websocket.Conn]string
 	BallRunning     bool
 	BallVisible     bool
-	Scores     scores.Scores
+	Scores          scores.Scores
 }
 
 // ball constants
@@ -180,76 +180,75 @@ func (wsh *WebSocketHandler) updateBallPosition() {
 		wsh.BallVar.Dy *= -1
 	}
 
-  
-/*
-  --DEPRECATED-- (now since scoring is there, this dont make sense)
+	/*
+	   --DEPRECATED-- (now since scoring is there, this dont make sense)
 
-  if wsh.BallVar.X-ballRadius <= 0 || wsh.BallVar.X+ballRadius >= maxWidth {
-  wsh.BallVar.Dx *= -1
-  }
+	   if wsh.BallVar.X-ballRadius <= 0 || wsh.BallVar.X+ballRadius >= maxWidth {
+	   wsh.BallVar.Dx *= -1
+	   }
 
-*/
+	*/
 
 	// paddle collision logic
 	wsh.handlePaddleCollision()
 	wsh.Mu.Unlock()
 
-  // check if there is any scoring
-  wsh.checkBallOutOfBounds()
+	// check if there is any scoring
+	wsh.checkBallOutOfBounds()
 }
 
 // checks for if the ball is out of bounds
 func (wsh *WebSocketHandler) checkBallOutOfBounds() {
-  wsh.Mu.Lock()
+	wsh.Mu.Lock()
 
-  ballRadius := wsh.BallVar.Radius
-  scored := false
-  scoreUpdate := map[string]interface{}{}
+	ballRadius := wsh.BallVar.Radius
+	scored := false
+	scoreUpdate := map[string]interface{}{}
 
-  // ball colliding with the left wall
-  if wsh.BallVar.X - ballRadius <= 0 {
-    // Right players score
-    wsh.Scores.RightScores++
-    log.Println("Right Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
-    wsh.resetBallWithDirection(1)
-    scored = true
-  }
+	// ball colliding with the left wall
+	if wsh.BallVar.X-ballRadius <= 0 {
+		// Right players score
+		wsh.Scores.RightScores++
+		log.Println("Right Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
+		wsh.resetBallWithDirection(1)
+		scored = true
+	}
 
-  // ball colliding with the left wall
-  if wsh.BallVar.X + ballRadius >= wsh.CanvasVar.Width {
-    // Left players score
-    wsh.Scores.LeftScores++
-    log.Println("Left Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
-    wsh.resetBallWithDirection(-1)
-    scored = true
-  }
+	// ball colliding with the left wall
+	if wsh.BallVar.X+ballRadius >= wsh.CanvasVar.Width {
+		// Left players score
+		wsh.Scores.LeftScores++
+		log.Println("Left Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
+		wsh.resetBallWithDirection(-1)
+		scored = true
+	}
 
-  if scored {
-    scoreUpdate = map[string]interface{}{
-      "type": "score",
-      "leftScore": wsh.Scores.LeftScores,
-      "rightScore": wsh.Scores.RightScores,
-    }
-  }
+	if scored {
+		scoreUpdate = map[string]interface{}{
+			"type":       "score",
+			"leftScore":  wsh.Scores.LeftScores,
+			"rightScore": wsh.Scores.RightScores,
+		}
+	}
 
-  // Release the lock before broadcasting
-  wsh.Mu.Unlock()
-  
-  // Broadcast outside of the lock if we scored
-  if scored {
-    wsh.broadcastToAll(scoreUpdate)
-  }
-} 
+	// Release the lock before broadcasting
+	wsh.Mu.Unlock()
+
+	// Broadcast outside of the lock if we scored
+	if scored {
+		wsh.broadcastToAll(scoreUpdate)
+	}
+}
 
 // after when the ball is collided with the ends
-// this function is breaking for some reason 
-func (wsh *WebSocketHandler) resetBallWithDirection(directionX int){
-  wsh.BallVar.X = wsh.CanvasVar.Width / 2
-  wsh.BallVar.Y = wsh.CanvasVar.Height / 2
+// this function is breaking for some reason
+func (wsh *WebSocketHandler) resetBallWithDirection(directionX int) {
+	wsh.BallVar.X = wsh.CanvasVar.Width / 2
+	wsh.BallVar.Y = wsh.CanvasVar.Height / 2
 
-  baseSpeed := 10
-  wsh.BallVar.Dx = float64(directionX) * float64(baseSpeed)
-  wsh.BallVar.Dy = (rand.Float64() - 0.5) * 5.0
+	baseSpeed := 10
+	wsh.BallVar.Dx = float64(directionX) * float64(baseSpeed)
+	wsh.BallVar.Dy = (rand.Float64() - 0.5) * 5.0
 }
 
 func (wsh *WebSocketHandler) updatePaddlePositions(client *Client, direction string) {
@@ -358,7 +357,6 @@ func (wsh *WebSocketHandler) handlePaddleCollision() {
   to the original position
 */
 
-
 func randomVariation() float64 {
 	return (rand.Float64() - 0.5) * 2
 }
@@ -383,37 +381,35 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	clientId := conn.RemoteAddr().String() + "_" + time.Now().String()
 
-
-
 	client := &Client{
 		conn:      conn,
 		sendQueue: make(chan interface{}, 100), // Increased buffer size
 		id:        clientId,
 	}
 
-  if len(wsh.Connections) < 2 {
-    log.Println("Total number of connections: ", len(wsh.Connections))
-    log.Println("team assigned")
-    if len(wsh.Connections)%2 == 0 {
-      client.team = "left"
-      wsh.LeftPaddleData.players++
-    } else {
-      client.team = "right"
-      wsh.RightPaddleData.players++
-    }
-  } else {
-    log.Println("Total number of connections: ", len(wsh.Connections))
-    log.Println("more than 2 players")
-    randomNumber := rand.Intn(100)  
-    log.Println("this is the randomNumber", randomNumber)
-    if randomNumber % 2 == 0 {
-      client.team = "left"
-    } else {
-      client.team = "right"
-    }
-  }
+	if len(wsh.Connections) < 2 {
+		log.Println("Total number of connections: ", len(wsh.Connections))
+		log.Println("team assigned")
+		if len(wsh.Connections)%2 == 0 {
+			client.team = "left"
+			wsh.LeftPaddleData.players++
+		} else {
+			client.team = "right"
+			wsh.RightPaddleData.players++
+		}
+	} else {
+		log.Println("Total number of connections: ", len(wsh.Connections))
+		log.Println("more than 2 players")
+		randomNumber := rand.Intn(100)
+		log.Println("this is the randomNumber", randomNumber)
+		if randomNumber%2 == 0 {
+			client.team = "left"
+		} else {
+			client.team = "right"
+		}
+	}
 
-  log.Println("this is the client", client.id, client.team)
+	log.Println("this is the client", client.id, client.team)
 
 	// a message queue, that sends the data to the client
 	go func() {
@@ -434,7 +430,6 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wsh.ConnToId[conn] = clientId
 
 	wsh.Mu.Unlock()
-
 
 	// Handle incoming messages
 	for {
@@ -477,7 +472,7 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Visible: true,
 			}
 
-      //log.Println("global paddle positions", globalPaddlePositions)
+			//log.Println("global paddle positions", globalPaddlePositions)
 
 			wsh.CanvasVar.Width = msg.Width
 			wsh.PaddleVar.Width = msg.PaddleWidth
@@ -501,10 +496,10 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			wsh.Mu.Unlock()
 
-      if len(wsh.Connections ) == 2{
-        initialized = true
-        gameRunning = true
-      }
+			if len(wsh.Connections) == 2 {
+				initialized = true
+				gameRunning = true
+			}
 
 			initialGameState := map[string]interface{}{
 				"leftPaddleData":  wsh.LeftPaddleData.position,
@@ -513,7 +508,7 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"clients":         len(wsh.Connections),
 			}
 
-      log.Println("even after the game is initialized it still enters this block", initialized)
+			log.Println("even after the game is initialized it still enters this block", initialized)
 			client.sendQueue <- initialGameState
 
 			continue
@@ -522,17 +517,17 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		client.sendQueue <- map[string]string{"status": "Message processed"}
 
-    if(gameRunning && initialized){
-      log.Println("game is running")
-      /*
-			gameState := map[string]interface{}{
-				"leftPaddleData":  globalPaddlePositions,
-				"rightPaddleData": wsh.RightPaddleData.position,
-				"yourTeam":        client.team,
-				"clients":         len(wsh.Connections),
-			}
-      */
-    }
+		if gameRunning && initialized {
+			log.Println("game is running")
+			/*
+				gameState := map[string]interface{}{
+					"leftPaddleData":  globalPaddlePositions,
+					"rightPaddleData": wsh.RightPaddleData.position,
+					"yourTeam":        client.team,
+					"clients":         len(wsh.Connections),
+				}
+			*/
+		}
 
 		var movement float64
 		if msg.Direction == "up" {

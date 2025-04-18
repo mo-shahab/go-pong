@@ -1,4 +1,4 @@
-package  ball
+package ball
 
 type Ball struct {
 	X, Y    float64
@@ -6,4 +6,3 @@ type Ball struct {
 	Radius  float64
 	Visible bool
 }
-
