@@ -75,6 +75,30 @@ func NewWebSocketHandler() *WebSocketHandler {
 	}
 }
 
+// ---------------------------------------------------
+// Broadcast functions
+func (wsh *WebSocketHandler) broadcastToAll(message interface{}) {
+	wsh.Mu.Lock()
+	defer wsh.Mu.Unlock()
+
+	for _, client := range wsh.Connections {
+		select {
+		case client.sendQueue <- message:
+			// log.Println("Message sent to client:", conn.RemoteAddr())
+		default:
+			log.Println("Dropping message, send queue full for client")
+		}
+	}
+}
+
+func (wsh *WebSocketHandler) broadcastBallPosition(){
+
+}
+// ---------------------------------------------------
+
+
+// ---------------------------------------------------
+// Ball Logic functions
 func (wsh *WebSocketHandler) startBallUpdates() {
 
 	ticker := time.NewTicker(32 * time.Millisecond)
@@ -85,7 +109,6 @@ func (wsh *WebSocketHandler) startBallUpdates() {
 
 		wsh.Mu.Lock()
 		if len(wsh.Connections) == 0 {
-			//log.Println("No active connections, skipping update") // Debugging log
 			wsh.Mu.Unlock()
 			continue
 		}
@@ -107,60 +130,68 @@ func (wsh *WebSocketHandler) startBallUpdates() {
 	}
 }
 
-func (wsh *WebSocketHandler) disconnectPlayer(conn *websocket.Conn) {
-	wsh.Mu.Lock()
-	defer wsh.Mu.Unlock()
+func (wsh *WebSocketHandler) resetBall(directionX int) {
+	wsh.BallVar.X = wsh.CanvasVar.Width / 2
+	wsh.BallVar.Y = wsh.CanvasVar.Height / 2
 
-	clientId, exists := wsh.ConnToId[conn]
-	if !exists {
-		return
-	}
-
-	client, exists := wsh.Connections[clientId]
-
-	if client.team == "left" {
-		wsh.LeftPaddleData.players--
-	} else {
-		wsh.RightPaddleData.players--
-	}
-
-	close(client.sendQueue)
-	delete(wsh.Connections, clientId)
-	delete(wsh.ConnToId, conn)
-
-	conn.Close()
+	baseSpeed := 10
+	wsh.BallVar.Dx = float64(directionX) * float64(baseSpeed)
+	wsh.BallVar.Dy = (rand.Float64() - 0.5) * 5.0
 }
 
-func (wsh *WebSocketHandler) broadcastPaddlePositions() {
-	wsh.Mu.Lock()
-	defer wsh.Mu.Unlock()
+// checks if the ball is out bounds, which would mean if the player has scored
+// or not
+func (wsh *WebSocketHandler) checkBallOutOfBounds() {
+    timer := time.NewTimer(3 * time.Second)
+    defer timer.Stop()
 
-	// Prepare game state with current paddle positions
-	gameState := map[string]float64{
-		"leftPaddleData":  globalPaddlePositions.leftPaddle,
-		"rightPaddleData": globalPaddlePositions.rightPaddle,
+	wsh.Mu.Lock()
+
+	ballRadius := wsh.BallVar.Radius
+	scored := false
+	scoreUpdate := map[string]interface{}{}
+
+    whoScored := ""
+
+	// ball colliding with the left wall
+	if wsh.BallVar.X-ballRadius <= 0 {
+		// Right players score
+		wsh.Scores.RightScores++
+		log.Println("Right Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
+		wsh.resetBall(1)
+		scored = true
+        whoScored = "Right"
 	}
 
-	for _, client := range wsh.Connections {
-		select {
-		case client.sendQueue <- gameState:
-		default:
-			log.Println("Dropping message, send queue full for client")
+	// ball colliding with the left wall
+	if wsh.BallVar.X+ballRadius >= wsh.CanvasVar.Width {
+		// Left players score
+		wsh.Scores.LeftScores++
+		log.Println("Left Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
+		wsh.resetBall(-1)
+		scored = true
+        whoScored = "Left"
+	}
+
+	if scored {
+
+		scoreUpdate = map[string]interface{}{
+			"type":       "score",
+			"leftScore":  wsh.Scores.LeftScores,
+			"rightScore": wsh.Scores.RightScores,
+			"scored": whoScored,
 		}
 	}
-}
 
-func (wsh *WebSocketHandler) broadcastToAll(message interface{}) {
-	wsh.Mu.Lock()
-	defer wsh.Mu.Unlock()
+	// Release the lock before broadcasting
+	wsh.Mu.Unlock()
 
-	for _, client := range wsh.Connections {
-		select {
-		case client.sendQueue <- message:
-			// log.Println("Message sent to client:", conn.RemoteAddr())
-		default:
-			log.Println("Dropping message, send queue full for client")
-		}
+	// Broadcast outside of the lock if we scored
+	if scored {
+		wsh.broadcastToAll(scoreUpdate)
+        log.Println("timer started")
+        <-timer.C
+        log.Println("timer stopped")
 	}
 }
 
@@ -196,59 +227,13 @@ func (wsh *WebSocketHandler) updateBallPosition() {
 	// check if there is any scoring
 	wsh.checkBallOutOfBounds()
 }
+// ---------------------------------------------------
 
-// checks for if the ball is out of bounds
-func (wsh *WebSocketHandler) checkBallOutOfBounds() {
-	wsh.Mu.Lock()
+// ---------------------------------------------------
+// Paddle Logic functions
 
-	ballRadius := wsh.BallVar.Radius
-	scored := false
-	scoreUpdate := map[string]interface{}{}
-
-	// ball colliding with the left wall
-	if wsh.BallVar.X-ballRadius <= 0 {
-		// Right players score
-		wsh.Scores.RightScores++
-		log.Println("Right Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
-		wsh.resetBallWithDirection(1)
-		scored = true
-	}
-
-	// ball colliding with the left wall
-	if wsh.BallVar.X+ballRadius >= wsh.CanvasVar.Width {
-		// Left players score
-		wsh.Scores.LeftScores++
-		log.Println("Left Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
-		wsh.resetBallWithDirection(-1)
-		scored = true
-	}
-
-	if scored {
-		scoreUpdate = map[string]interface{}{
-			"type":       "score",
-			"leftScore":  wsh.Scores.LeftScores,
-			"rightScore": wsh.Scores.RightScores,
-		}
-	}
-
-	// Release the lock before broadcasting
-	wsh.Mu.Unlock()
-
-	// Broadcast outside of the lock if we scored
-	if scored {
-		wsh.broadcastToAll(scoreUpdate)
-	}
-}
-
-// after when the ball is collided with the ends
-// this function is breaking for some reason
-func (wsh *WebSocketHandler) resetBallWithDirection(directionX int) {
-	wsh.BallVar.X = wsh.CanvasVar.Width / 2
-	wsh.BallVar.Y = wsh.CanvasVar.Height / 2
-
-	baseSpeed := 10
-	wsh.BallVar.Dx = float64(directionX) * float64(baseSpeed)
-	wsh.BallVar.Dy = (rand.Float64() - 0.5) * 5.0
+func randomVariation() float64 {
+	return (rand.Float64() - 0.5) * 2
 }
 
 func (wsh *WebSocketHandler) updatePaddlePositions(client *Client, direction string) {
@@ -300,7 +285,14 @@ func (wsh *WebSocketHandler) updatePaddlePositions(client *Client, direction str
 		paddle.movementSum = 0
 	}
 
-	wsh.broadcastPaddlePositions()
+	// Prepare game state with current paddle positions
+	gameState := map[string]float64{
+		"leftPaddleData":  globalPaddlePositions.leftPaddle,
+		"rightPaddleData": globalPaddlePositions.rightPaddle,
+	}
+
+    wsh.broadcastToAll(gameState)
+	// wsh.broadcastPaddlePositions()
 }
 
 func (wsh *WebSocketHandler) handlePaddleCollision() {
@@ -343,35 +335,41 @@ func (wsh *WebSocketHandler) handlePaddleCollision() {
 		wsh.BallVar.X = rightPaddleLeft - ballRadius
 	}
 }
+// ---------------------------------------------------
 
-/*
-  write a function to check if the ball missed the paddles and has hit the ends
-  of the canvas, the most basic approach for this would be to check if the ball
-  has hit the left or right side of the canvas, if so, reset the ball to the
-  center of the canvas and reverse its direction. later we will have to also
-  consider the fact that the paddles are there, so we have to see for the paddle
-  positions and check if the ball has hit the paddle, but lets just do this
-  right, we can just check if the ball has hit the left or right end, because
-  anyway it will hit the paddle we just have to write a simple function to see if
-  the ball has hit the ends that is it for now, if it does then  reset the ball
-  to the original position
-*/
+// ---------------------------------------------------
+// Game Logic Functions
 
-func randomVariation() float64 {
-	return (rand.Float64() - 0.5) * 2
+func (wsh *WebSocketHandler) disconnectPlayer(conn *websocket.Conn) {
+	wsh.Mu.Lock()
+	defer wsh.Mu.Unlock()
+
+	clientId, exists := wsh.ConnToId[conn]
+	if !exists {
+		return
+	}
+
+	client, exists := wsh.Connections[clientId]
+
+	if client.team == "left" {
+		wsh.LeftPaddleData.players--
+	} else {
+		wsh.RightPaddleData.players--
+	}
+
+	close(client.sendQueue)
+	delete(wsh.Connections, clientId)
+	delete(wsh.ConnToId, conn)
+
+	conn.Close()
 }
-
-func (wsh *WebSocketHandler) resetBall() {
-	wsh.BallVar.X = wsh.CanvasVar.Width / 2
-	wsh.BallVar.Y = wsh.CanvasVar.Height / 2
-
-	// reverse the direction randomly for variation
-	wsh.BallVar.Dx = -wsh.BallVar.Dx
-}
+// ---------------------------------------------------
 
 var initialized bool
 var gameRunning bool
 
+// ---------------------------------------------------
+// Main Game Loop
 func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	conn, err := wsh.Upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -572,6 +570,11 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		wsh.Mu.Unlock()
-		wsh.broadcastPaddlePositions()
+
+        gameState := map[string]float64{
+            "leftPaddleData":  globalPaddlePositions.leftPaddle,
+            "rightPaddleData": globalPaddlePositions.rightPaddle,
+        }
+        wsh.broadcastToAll(gameState)
 	}
 }
