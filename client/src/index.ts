@@ -68,7 +68,6 @@ function drawGame(): void {
   ctx.arc(ballX, ballY, 8, 0, Math.PI * 2);
   ctx.fill();
   
-  // Draw scores
   ctx.font = '36px Arial';
   ctx.textAlign = 'center';
   ctx.fillText(leftScore.toString(), gameWidth / 4, 50);
