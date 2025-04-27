@@ -5,6 +5,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/mo-shahab/go-pong/ball"
 	"github.com/mo-shahab/go-pong/canvas"
+	"github.com/mo-shahab/go-pong/client"
 	"github.com/mo-shahab/go-pong/paddle"
 	"github.com/mo-shahab/go-pong/scores"
 	"log"
@@ -22,12 +23,12 @@ type paddleData struct {
 	position    float64
 }
 
-type Client struct {
-	conn      *websocket.Conn
-	sendQueue chan interface{}
-	team      string
-	id        string
-}
+// type Client struct {
+// 	conn      *websocket.Conn
+// 	sendQueue chan interface{}
+// 	team      string
+// 	id        string
+// }
 
 type paddlePositions struct {
 	leftPaddle  float64
@@ -44,7 +45,7 @@ type WebSocketHandler struct {
 	CanvasVar       canvas.Canvas
 	PaddleVar       paddle.Paddle
 	Mu              sync.Mutex
-	Connections     map[string]*Client
+	Connections     map[string]*client.Client
 	ConnToId        map[*websocket.Conn]string
 	BallRunning     bool
 	BallVisible     bool
@@ -53,8 +54,6 @@ type WebSocketHandler struct {
 
 // ball constants
 const (
-	initialBallDx = 20
-	initialBallDy = 0
 	ballRadius    = 8
 )
 
@@ -99,37 +98,6 @@ func (wsh *WebSocketHandler) broadcastBallPosition(){
 
 // ---------------------------------------------------
 // Ball Logic functions
-func (wsh *WebSocketHandler) startBallUpdates() {
-
-	ticker := time.NewTicker(32 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		<-ticker.C
-
-		wsh.Mu.Lock()
-		if len(wsh.Connections) == 0 {
-			wsh.Mu.Unlock()
-			continue
-		}
-		wsh.Mu.Unlock()
-
-		wsh.updateBallPosition()
-
-		wsh.Mu.Lock()
-		message := map[string]interface{}{
-			"ball": map[string]float64{
-				"x":      wsh.BallVar.X,
-				"y":      wsh.BallVar.Y,
-				"radius": wsh.BallVar.Radius,
-			},
-		}
-		wsh.Mu.Unlock()
-
-		wsh.broadcastToAll(message)
-	}
-}
-
 func (wsh *WebSocketHandler) resetBall(directionX int) {
 	wsh.BallVar.X = wsh.CanvasVar.Width / 2
 	wsh.BallVar.Y = wsh.CanvasVar.Height / 2
@@ -487,10 +455,16 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				wsh.BallVisible = false
 			}
 
-			if !wsh.BallRunning && len(wsh.Connections) > 1 {
-				wsh.BallRunning = true
-				go wsh.startBallUpdates()
-			}
+            if !wsh.BallRunning && len(wsh.Connections) > 1 {
+                wsh.BallRunning = true
+                // go wsh.startBallUpdates()
+                // ball *ball.Ball,
+                // mutex *sync.Mutex,
+                // connections map[string]*client.Client,
+                // broadcast func(interface{}),
+
+                go ball.StartBallUpdates(wsh.BallVar, wsh.Mu, wsh.Connections, wsh.broadcastToAll)
+            }
 
 			wsh.Mu.Unlock()
 
