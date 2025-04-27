@@ -11,6 +11,9 @@ watch:
 start:
 	cd ./server && go run main.go
 
+go_fmt:
+	cd ./server && go fmt .
+
 run: build start
 
 clean:
