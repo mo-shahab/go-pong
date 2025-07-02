@@ -19,7 +19,7 @@ proto: proto-go proto-ts
 proto-go:
 	@echo "Generating Go protobuf files..."
 	@mkdir -p ./server/proto
-	protoc --plugin=/home/shahab/go/bin/protoc-gen-go \
+	protoc --plugin=$(HOME)/go/bin/protoc-gen-go \
 		--go_out=./server/ \
 		--go_opt=paths=source_relative \
 		./proto/gopong.proto
