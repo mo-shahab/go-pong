@@ -2,4 +2,7 @@ node_modules/
 dist/
 scripts/
 package-lock.json
+pnpm-lock.*
 client/scripts/
+
+proto

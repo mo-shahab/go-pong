@@ -10,6 +10,10 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
+    "ts-proto": "^2.7.5",
     "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "protobufjs": "^7.5.3"
   }
 }
