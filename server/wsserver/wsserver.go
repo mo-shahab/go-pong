@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+	// pb "github.com/mo-shahab/go-pong/proto"
+	// "google.golang.org/protobuf/proto"
 )
 
 type paddleData struct {
@@ -117,6 +119,25 @@ func (wsh *WebSocketHandler) startBallUpdates() {
 		wsh.updateBallPosition()
 
 		wsh.Mu.Lock()
+
+		// ballObject := &pb.Ball{
+		// 	x: wsh.BallVar.x,
+		// 	y: wsh.BallVar.Y,
+		// 	radius: wsh.BallVar.Radius,
+		// }
+
+		// ballMessage := &pb.BallMessage {
+		// 	ball: ballObject,
+		// }
+
+		// message, err := proto.Marshal(ballMessage);
+		//
+		// if err != nil {
+		// 	log.Fatalln("Failed to encode the ball message: ", err)
+		// 	wsh.Mu.Unlock()
+		// 	continue
+		// }
+
 		message := map[string]interface{}{
 			"ball": map[string]float64{
 				"x":      wsh.BallVar.X,
@@ -124,6 +145,7 @@ func (wsh *WebSocketHandler) startBallUpdates() {
 				"radius": wsh.BallVar.Radius,
 			},
 		}
+
 		wsh.Mu.Unlock()
 
 		wsh.broadcastToAll(message)

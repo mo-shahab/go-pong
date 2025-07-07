@@ -5,4 +5,5 @@ package-lock.json
 pnpm-lock.*
 client/scripts/
 
-proto
+client/src/proto
+server/proto

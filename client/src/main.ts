@@ -1,3 +1,5 @@
+import { Message, InitMessage } from "./proto/gopong";
+
 interface GameData {
     leftPaddleData?: number;
     rightPaddleData?: number;
@@ -19,13 +21,13 @@ interface MovementData {
     paddle: "left" | "right";
 }
 
-interface InitData {
-    type: string;
-    width: number;
-    height: number;
-    paddleHeight: number;
-    paddleWidth: number;
-}
+// interface InitData {
+//     type: string;
+//     width: number;
+//     height: number;
+//     paddleHeight: number;
+//     paddleWidth: number;
+// }
 
 // Connect to the WebSocket server
 const socket = new WebSocket("ws://localhost:8080/ws");
@@ -61,6 +63,8 @@ let startTime: number = 0;
 let timeLeft: number = 0;
 let intervalId: number | undefined;
 
+
+console.log("Fix that error and print scored: ", scored);
 
 // Draw the game elements
 function drawGame(): void {
@@ -135,10 +139,12 @@ function updateTimer(): void {
 }
 
 // WebSocket event handlers
+
 socket.onopen = (): void => {
     console.log("Connected to WebSocket server");
 
-    const initData: InitData = {
+    // 1. Create a plain JavaScript object matching the InitMessage structure
+    const initDataPlain: InitMessage = { // This is a plain object, not an instance of a class
         type: "init",
         width: gameWidth,
         height: gameHeight,
@@ -146,8 +152,21 @@ socket.onopen = (): void => {
         paddleWidth: paddleWidth,
     };
 
-    console.log(initData);
-    socket.send(JSON.stringify(initData));
+    // 2. Wrap the plain InitMessage object inside a plain Message object for the oneof
+    const wrappedMessagePlain = {
+        init: initDataPlain, // Assign the plain initData object to the 'init' field of the oneof
+    };
+
+    // 3. Use the static .encode() method on the Message type with the plain object
+    //    and then .finish() to get the Uint8Array.
+    const encoded: Uint8Array = Message.encode(wrappedMessagePlain).finish();
+
+    console.log("This is the encoded message from the client", encoded);
+    console.log("Sending InitMessage (object representation):", initDataPlain);
+
+    // 4. Send the binary data over the WebSocket
+    //    Do NOT JSON.stringify it. Send the Uint8Array directly.
+    socket.send(encoded);
 };
 
 socket.onmessage = (event: MessageEvent): void => {
@@ -228,7 +247,7 @@ document.addEventListener("keydown", (e: KeyboardEvent): void => {
 });
 
 // Clean up WebSocket connection when page closes
-window.addEventListener('beforeunload', (event: BeforeUnloadEvent): void => {
+window.addEventListener('beforeunload', (_: BeforeUnloadEvent): void => {
     if (socket && socket.readyState === WebSocket.OPEN) {
         socket.close(1000, "Page is closing");
     }

@@ -1,19 +1,20 @@
 {
   "name": "client",
-  "version": "1.0.0",
-  "main": "index.js",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "devDependencies": {
+    "google-protobuf": "^3.21.4",
     "ts-proto": "^2.7.5",
-    "typescript": "^5.8.3"
+    "typescript": "~5.8.3",
+    "vite": "^7.0.0"
   },
   "dependencies": {
-    "protobufjs": "^7.5.3"
+    "@bufbuild/protobuf": "^2.6.0"
   }
 }

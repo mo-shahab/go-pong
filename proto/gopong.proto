@@ -1,0 +1,87 @@
+syntax = "proto3";
+package gopong;
+
+option go_package = "github.com/mo-shahab/go-pong/proto";
+
+// Ball position and properties
+message Ball {
+  double x = 1;
+  double y = 2;
+  double radius = 3;
+}
+
+// Client initialization message (from client to server)
+message InitMessage {
+  string type = 1;           // "init"
+  double width = 2;          // canvas width
+  double height = 3;         // canvas height
+  double paddle_height = 4;  // paddle height
+  double paddle_width = 5;   // paddle width
+}
+
+// Movement message (from client to server)
+message MovementMessage {
+  string type = 1;           // "move"
+  string direction = 2;      // "up" or "down"
+  string paddle = 3;         // "left" or "right"
+}
+
+// Game state update (from server to client)
+message GameStateMessage {
+  string type = 1;                    // message type identifier
+  optional double left_paddle_data = 2;   // left paddle Y position
+  optional double right_paddle_data = 3;  // right paddle Y position
+  optional int32 clients = 4;             // number of connected clients
+  optional Ball ball = 5;                 // ball position and properties
+  optional int32 left_score = 6;          // left team score
+  optional int32 right_score = 7;         // right team score
+  optional string scored = 8;             // which team scored ("left" or "right")
+  optional string your_team = 9;          // assigned team for this client
+}
+
+// Score update message (from server to client)
+message ScoreMessage {
+  string type = 1;           // "score"
+  int32 left_score = 2;      // left team score
+  int32 right_score = 3;     // right team score
+  string scored = 4;         // which team scored ("left" or "right")
+}
+
+// Initial game state (from server to client)
+message InitialGameStateMessage {
+  double left_paddle_data = 1;    // initial left paddle position
+  double right_paddle_data = 2;   // initial right paddle position
+  string your_team = 3;           // assigned team ("left" or "right")
+  int32 clients = 4;              // number of connected clients
+}
+
+// Paddle positions broadcast (from server to client)
+message PaddlePositionsMessage {
+  double left_paddle_data = 1;    // left paddle Y position
+  double right_paddle_data = 2;   // right paddle Y position
+}
+
+// Ball position broadcast (from server to client)
+message BallPositionMessage {
+  Ball ball = 1;                  // ball position and properties
+}
+
+// Error message (from server to client)
+message ErrorMessage {
+  string error = 1;               // error description
+  string status = 2;              // status message
+}
+
+// Union message for all possible messages
+message Message {
+  oneof message_type {
+    InitMessage init = 1;
+    MovementMessage movement = 2;
+    GameStateMessage game_state = 3;
+    ScoreMessage score = 4;
+    InitialGameStateMessage initial_game_state = 5;
+    PaddlePositionsMessage paddle_positions = 6;
+    BallPositionMessage ball_position = 7;
+    ErrorMessage error = 8;
+  }
+}
