@@ -1,7 +1,6 @@
 package wsserver
 
 import (
-	"encoding/json"
 	"github.com/gorilla/websocket"
 	"github.com/mo-shahab/go-pong/ball"
 	"github.com/mo-shahab/go-pong/canvas"
@@ -13,8 +12,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
-	// pb "github.com/mo-shahab/go-pong/proto"
-	// "google.golang.org/protobuf/proto"
+	pb "github.com/mo-shahab/go-pong/proto"
+	"google.golang.org/protobuf/proto"
 )
 
 type paddleData struct {
@@ -26,7 +25,7 @@ type paddleData struct {
 
 type Client struct {
 	conn      *websocket.Conn
-	sendQueue chan interface{}
+	sendQueue chan []byte
 	team      string
 	id        string
 }
@@ -79,7 +78,7 @@ func NewWebSocketHandler() *WebSocketHandler {
 
 // ---------------------------------------------------
 // Broadcast functions
-func (wsh *WebSocketHandler) broadcastToAll(message interface{}) {
+func (wsh *WebSocketHandler) broadcastToAll(message []byte) {
 	wsh.Mu.Lock()
 	defer wsh.Mu.Unlock()
 
@@ -138,17 +137,17 @@ func (wsh *WebSocketHandler) startBallUpdates() {
 		// 	continue
 		// }
 
-		message := map[string]interface{}{
-			"ball": map[string]float64{
-				"x":      wsh.BallVar.X,
-				"y":      wsh.BallVar.Y,
-				"radius": wsh.BallVar.Radius,
-			},
-		}
+		// message := map[string]interface{}{
+		// 	"ball": map[string]float64{
+		// 		"x":      wsh.BallVar.X,
+		// 		"y":      wsh.BallVar.Y,
+		// 		"radius": wsh.BallVar.Radius,
+		// 	},
+		// }
 
 		wsh.Mu.Unlock()
 
-		wsh.broadcastToAll(message)
+		// wsh.broadcastToAll(message)
 	}
 }
 
@@ -163,59 +162,60 @@ func (wsh *WebSocketHandler) resetBall(directionX int) {
 
 // checks if the ball is out bounds, which would mean if the player has scored
 // or not
-func (wsh *WebSocketHandler) checkBallOutOfBounds() {
-    timer := time.NewTimer(3 * time.Second)
-    defer timer.Stop()
 
-	wsh.Mu.Lock()
-
-	ballRadius := wsh.BallVar.Radius
-	scored := false
-	scoreUpdate := map[string]interface{}{}
-
-    whoScored := ""
-
-	// ball colliding with the left wall
-	if wsh.BallVar.X-ballRadius <= 0 {
-		// Right players score
-		wsh.Scores.RightScores++
-		log.Println("Right Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
-		wsh.resetBall(1)
-		scored = true
-        whoScored = "Right"
-	}
-
-	// ball colliding with the left wall
-	if wsh.BallVar.X+ballRadius >= wsh.CanvasVar.Width {
-		// Left players score
-		wsh.Scores.LeftScores++
-		log.Println("Left Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
-		wsh.resetBall(-1)
-		scored = true
-        whoScored = "Left"
-	}
-
-	if scored {
-
-		scoreUpdate = map[string]interface{}{
-			"type":       "score",
-			"leftScore":  wsh.Scores.LeftScores,
-			"rightScore": wsh.Scores.RightScores,
-			"scored": whoScored,
-		}
-	}
-
-	// Release the lock before broadcasting
-	wsh.Mu.Unlock()
-
-	// Broadcast outside of the lock if we scored
-	if scored {
-		wsh.broadcastToAll(scoreUpdate)
-        log.Println("timer started")
-        <-timer.C
-        log.Println("timer stopped")
-	}
-}
+// func (wsh *WebSocketHandler) checkBallOutOfBounds() {
+//     timer := time.NewTimer(3 * time.Second)
+//     defer timer.Stop()
+//
+// 	wsh.Mu.Lock()
+//
+// 	ballRadius := wsh.BallVar.Radius
+// 	scored := false
+// 	// scoreUpdate := map[string]interface{}{}
+//
+//     whoScored := ""
+//
+// 	// ball colliding with the left wall
+// 	if wsh.BallVar.X-ballRadius <= 0 {
+// 		// Right players score
+// 		wsh.Scores.RightScores++
+// 		log.Println("Right Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
+// 		wsh.resetBall(1)
+// 		scored = true
+//         whoScored = "Right"
+// 	}
+//
+// 	// ball colliding with the left wall
+// 	if wsh.BallVar.X+ballRadius >= wsh.CanvasVar.Width {
+// 		// Left players score
+// 		wsh.Scores.LeftScores++
+// 		log.Println("Left Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
+// 		wsh.resetBall(-1)
+// 		scored = true
+//         whoScored = "Left"
+// 	}
+//
+// 	if scored {
+//
+// 		// scoreUpdate = map[string]interface{}{
+// 		// 	"type":       "score",
+// 		// 	"leftScore":  wsh.Scores.LeftScores,
+// 		// 	"rightScore": wsh.Scores.RightScores,
+// 		// 	"scored": whoScored,
+// 		// }
+// 	}
+//
+// 	// Release the lock before broadcasting
+// 	wsh.Mu.Unlock()
+//
+// 	// Broadcast outside of the lock if we scored
+// 	if scored {
+// 		// wsh.broadcastToAll(scoreUpdate)
+//         log.Println("timer started")
+//         <-timer.C
+//         log.Println("timer stopped")
+// 	}
+// }
 
 func (wsh *WebSocketHandler) updateBallPosition() {
 	wsh.Mu.Lock()
@@ -247,7 +247,7 @@ func (wsh *WebSocketHandler) updateBallPosition() {
 	wsh.Mu.Unlock()
 
 	// check if there is any scoring
-	wsh.checkBallOutOfBounds()
+	// wsh.checkBallOutOfBounds()
 }
 // ---------------------------------------------------
 
@@ -308,12 +308,12 @@ func (wsh *WebSocketHandler) updatePaddlePositions(client *Client, direction str
 	}
 
 	// Prepare game state with current paddle positions
-	gameState := map[string]float64{
-		"leftPaddleData":  globalPaddlePositions.leftPaddle,
-		"rightPaddleData": globalPaddlePositions.rightPaddle,
-	}
+	// gameState := map[string]float64{
+	// 	"leftPaddleData":  globalPaddlePositions.leftPaddle,
+	// 	"rightPaddleData": globalPaddlePositions.rightPaddle,
+	// }
 
-    wsh.broadcastToAll(gameState)
+    // wsh.broadcastToAll(gameState)
 	// wsh.broadcastPaddlePositions()
 }
 
@@ -403,7 +403,7 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	client := &Client{
 		conn:      conn,
-		sendQueue: make(chan interface{}, 100), // Increased buffer size
+		sendQueue: make(chan []byte, 100), // Increased buffer size
 		id:        clientId,
 	}
 
@@ -434,9 +434,9 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// a message queue, that sends the data to the client
 	go func() {
 		for msg := range client.sendQueue {
-			err := client.conn.WriteJSON(msg)
+			err := client.conn.WriteMessage(websocket.BinaryMessage, msg)
 			if err != nil {
-				log.Println("Write error:", err)
+				log.Println("Binary Message Write error (go routine sendqueue):", err)
 				client.conn.Close()
 				wsh.disconnectPlayer(conn)
 				return
@@ -460,82 +460,177 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		//log.Printf("Message received: %s", p)
-
-		var msg struct {
-			Type         string  `json:"type"`
-			Direction    string  `json:"direction"`
-			Paddle       string  `json:"paddle"`
-			Width        float64 `json:width`
-			Height       float64 `json:height`
-			PaddleHeight float64 `json:paddleHeight`
-			PaddleWidth  float64 `json:paddleWidth`
-		}
-
-		err = json.Unmarshal(p, &msg)
+		log.Printf("Message received: %s", p)
+		
+		message := &pb.Message{}
+		err = proto.Unmarshal(p, message)
+		log.Println("Parsed Message: ", message)
 		if err != nil {
-			log.Printf("Error unmarshalling message: %s", err)
-			// Send JSON error response
-			client.sendQueue <- map[string]string{"error": "Invalid message format"}
-			continue
+			log.Println("Error when unmarshalling protobuf binary:", err)
+
+			errorMessage := &pb.ErrorMessage{
+				Error: "Invalid protobuf format",
+			}
+
+			wrappedError := &pb.Message{
+				Type: pb.MsgType_error,
+				MessageType: &pb.Message_Error{
+					Error: errorMessage,
+				},
+			}
+
+			encoded, marshalErr := proto.Marshal(wrappedError)
+			if marshalErr != nil {
+				log.Println("Failed to marshal ErrorMessage:", marshalErr)
+				continue
+			}
+
+			client.sendQueue <- encoded
 		}
 
-		if !initialized && msg.Width > 0 && msg.Height > 0 {
+
+		switch message.Type {			
+
+		case pb.MsgType_init:
+			init := message.GetInit()
+			log.Println("Init Message: %+v", init)
+
+			if !initialized && init.Width > 0 && init.Height > 0 {
+				wsh.Mu.Lock()
+
+				wsh.BallVar = ball.Ball{
+					X:       init.Width / 2,
+					Y:       init.Height / 2,
+					Dx:      -10,
+					Dy:      0,
+					Radius:  ballRadius,
+					Visible: true,
+				}
+
+				//log.Println("global paddle positions", globalPaddlePositions)
+
+				wsh.CanvasVar.Width = init.Width
+				wsh.PaddleVar.Width = init.PaddleWidth
+				wsh.PaddleVar.Height = init.PaddleHeight
+				wsh.CanvasVar.Height = init.Height
+
+				globalPaddlePositions.leftPaddle = wsh.LeftPaddleData.position
+				globalPaddlePositions.rightPaddle = wsh.RightPaddleData.position
+
+				if len(wsh.Connections) == 1 {
+					wsh.LeftPaddleData.position = (init.Height / 2) - (init.PaddleHeight / 2)
+					wsh.RightPaddleData.position = (init.Height / 2) - (init.PaddleHeight / 2)
+					wsh.BallRunning = false
+					wsh.BallVisible = false
+				}
+
+				if !wsh.BallRunning && len(wsh.Connections) > 1 {
+					wsh.BallRunning = true
+					go wsh.startBallUpdates()
+				}
+
+				wsh.Mu.Unlock()
+
+				if len(wsh.Connections) == 2 {
+					initialized = true
+					gameRunning = true
+				}
+
+				// initialGameState := map[string]interface{}{
+				// 	"leftPaddleData":  wsh.LeftPaddleData.position,
+				// 	"rightPaddleData": wsh.RightPaddleData.position,
+				// 	"yourTeam":        client.team,
+				// 	"clients":         len(wsh.Connections),
+				// }
+
+				initialGameState := &pb.InitialGameStateMessage{
+					LeftPaddleData: wsh.LeftPaddleData.position,
+					RightPaddleData : wsh.RightPaddleData.position,
+					YourTeam : client.team,
+					// Clients : len(wsh.Connections),
+				}
+
+				wrappedInitialGameState := &pb.Message{
+					MessageType: &pb.Message_InitialGameState{
+						InitialGameState: initialGameState,
+					},
+				}
+
+				encoded, marshalInit := proto.Marshal(wrappedInitialGameState)
+				if marshalInit != nil {
+					log.Println("Failed to marshal Initial Game State Message:", marshalInit)
+					continue
+				}
+
+				log.Println("even after the game is initialized it still enters this block", initialized)
+				client.sendQueue <- encoded
+
+				continue
+
+			}
+
+		case pb.MsgType_movment:
+			move := message.GetMovement()
+			log.Println("Movement Message: %+v", move)
+
+			var movement float64
+
+			if move.Direction == "up" {
+				movement = -30
+			} else if move.Direction == "down" {
+				movement = 30
+			}
+
 			wsh.Mu.Lock()
+			//log.Println("updates of global positions, left paddle and right paddle  ",
+			//globalPaddlePositions, wsh.LeftPaddleData.position, wsh.RightPaddleData.position)
 
-			wsh.BallVar = ball.Ball{
-				X:       msg.Width / 2,
-				Y:       msg.Height / 2,
-				Dx:      -10,
-				Dy:      0,
-				Radius:  ballRadius,
-				Visible: true,
+			if client.team == "left" {
+				newLeftPaddlePos := globalPaddlePositions.leftPaddle + movement
+
+				if newLeftPaddlePos >= 0 && newLeftPaddlePos+wsh.PaddleVar.Height <= wsh.CanvasVar.Height {
+					globalPaddlePositions.leftPaddle = newLeftPaddlePos
+				}
+
+				wsh.LeftPaddleData.movementSum += movement
+				if wsh.LeftPaddleData.players > 0 {
+					wsh.LeftPaddleData.position = wsh.LeftPaddleData.movementSum / float64(wsh.LeftPaddleData.players)
+					wsh.RightPaddleData.position = 0
+					wsh.LeftPaddleData.movementSum = 0
+				} else {
+					wsh.LeftPaddleData.position = 0
+					wsh.LeftPaddleData.movementSum = 0
+				}
+			} else {
+				newRightPaddlePos := globalPaddlePositions.rightPaddle + movement
+
+				if newRightPaddlePos >= 0 && newRightPaddlePos+wsh.PaddleVar.Height <= wsh.CanvasVar.Height {
+					globalPaddlePositions.rightPaddle = newRightPaddlePos
+				}
+
+				wsh.RightPaddleData.movementSum += movement
+				if wsh.RightPaddleData.players > 0 {
+					wsh.RightPaddleData.position = wsh.RightPaddleData.movementSum / float64(wsh.RightPaddleData.players)
+					wsh.LeftPaddleData.position = 0
+					wsh.RightPaddleData.movementSum = 0
+				} else {
+					wsh.RightPaddleData.position = 0
+					wsh.RightPaddleData.movementSum = 0
+				}
 			}
-
-			//log.Println("global paddle positions", globalPaddlePositions)
-
-			wsh.CanvasVar.Width = msg.Width
-			wsh.PaddleVar.Width = msg.PaddleWidth
-			wsh.PaddleVar.Height = msg.PaddleHeight
-			wsh.CanvasVar.Height = msg.Height
-
-			globalPaddlePositions.leftPaddle = wsh.LeftPaddleData.position
-			globalPaddlePositions.rightPaddle = wsh.RightPaddleData.position
-
-			if len(wsh.Connections) == 1 {
-				wsh.LeftPaddleData.position = (msg.Height / 2) - (msg.PaddleHeight / 2)
-				wsh.RightPaddleData.position = (msg.Height / 2) - (msg.PaddleHeight / 2)
-				wsh.BallRunning = false
-				wsh.BallVisible = false
-			}
-
-			if !wsh.BallRunning && len(wsh.Connections) > 1 {
-				wsh.BallRunning = true
-				go wsh.startBallUpdates()
-			}
-
 			wsh.Mu.Unlock()
 
-			if len(wsh.Connections) == 2 {
-				initialized = true
-				gameRunning = true
-			}
-
-			initialGameState := map[string]interface{}{
-				"leftPaddleData":  wsh.LeftPaddleData.position,
-				"rightPaddleData": wsh.RightPaddleData.position,
-				"yourTeam":        client.team,
-				"clients":         len(wsh.Connections),
-			}
-
-			log.Println("even after the game is initialized it still enters this block", initialized)
-			client.sendQueue <- initialGameState
+			// gameState := map[string]float64{
+			// 	"leftPaddleData":  globalPaddlePositions.leftPaddle,
+			// 	"rightPaddleData": globalPaddlePositions.rightPaddle,
+			// }
+			// wsh.broadcastToAll(gameState)
 
 			continue
-
 		}
 
-		client.sendQueue <- map[string]string{"status": "Message processed"}
+
+		// client.sendQueue <- map[string]string{"status": "Message processed"}
 
 		if gameRunning && initialized {
 			log.Println("game is running")
@@ -549,54 +644,12 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			*/
 		}
 
-		var movement float64
-		if msg.Direction == "up" {
-			movement = -30
-		} else if msg.Direction == "down" {
-			movement = 30
-		}
+		// var movement float64
+		// if msg.Direction == "up" {
+		// 	movement = -30
+		// } else if msg.Direction == "down" {
+		// 	movement = 30
+		// }
 
-		wsh.Mu.Lock()
-		//log.Println("updates of global positions, left paddle and right paddle  ", globalPaddlePositions, wsh.LeftPaddleData.position, wsh.RightPaddleData.position)
-		if client.team == "left" {
-			newLeftPaddlePos := globalPaddlePositions.leftPaddle + movement
-
-			if newLeftPaddlePos >= 0 && newLeftPaddlePos+wsh.PaddleVar.Height <= wsh.CanvasVar.Height {
-				globalPaddlePositions.leftPaddle = newLeftPaddlePos
-			}
-
-			wsh.LeftPaddleData.movementSum += movement
-			if wsh.LeftPaddleData.players > 0 {
-				wsh.LeftPaddleData.position = wsh.LeftPaddleData.movementSum / float64(wsh.LeftPaddleData.players)
-				wsh.RightPaddleData.position = 0
-				wsh.LeftPaddleData.movementSum = 0
-			} else {
-				wsh.LeftPaddleData.position = 0
-				wsh.LeftPaddleData.movementSum = 0
-			}
-		} else {
-			newRightPaddlePos := globalPaddlePositions.rightPaddle + movement
-
-			if newRightPaddlePos >= 0 && newRightPaddlePos+wsh.PaddleVar.Height <= wsh.CanvasVar.Height {
-				globalPaddlePositions.rightPaddle = newRightPaddlePos
-			}
-
-			wsh.RightPaddleData.movementSum += movement
-			if wsh.RightPaddleData.players > 0 {
-				wsh.RightPaddleData.position = wsh.RightPaddleData.movementSum / float64(wsh.RightPaddleData.players)
-				wsh.LeftPaddleData.position = 0
-				wsh.RightPaddleData.movementSum = 0
-			} else {
-				wsh.RightPaddleData.position = 0
-				wsh.RightPaddleData.movementSum = 0
-			}
-		}
-		wsh.Mu.Unlock()
-
-        gameState := map[string]float64{
-            "leftPaddleData":  globalPaddlePositions.leftPaddle,
-            "rightPaddleData": globalPaddlePositions.rightPaddle,
-        }
-        wsh.broadcastToAll(gameState)
 	}
 }

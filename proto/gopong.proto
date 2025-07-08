@@ -3,6 +3,22 @@ package gopong;
 
 option go_package = "github.com/mo-shahab/go-pong/proto";
 
+// ========= Enums ==========
+
+enum MsgType {
+  UNKNOWN = 0;
+  init = 1; // from client to server
+  movment = 2;
+  game_state = 3;
+  score = 4;
+  initial_game_state = 5; // from server to client
+  paddle_positions = 6;
+  ball_position = 7;
+  error = 8;
+}
+
+// ==========================
+
 // Ball position and properties
 message Ball {
   double x = 1;
@@ -12,39 +28,35 @@ message Ball {
 
 // Client initialization message (from client to server)
 message InitMessage {
-  string type = 1;           // "init"
-  double width = 2;          // canvas width
-  double height = 3;         // canvas height
-  double paddle_height = 4;  // paddle height
-  double paddle_width = 5;   // paddle width
+  double width = 1;          // canvas width
+  double height = 2;         // canvas height
+  double paddle_height = 3;  // paddle height
+  double paddle_width = 4;   // paddle width
 }
 
 // Movement message (from client to server)
 message MovementMessage {
-  string type = 1;           // "move"
-  string direction = 2;      // "up" or "down"
-  string paddle = 3;         // "left" or "right"
+  string direction = 1;      // "up" or "down"
+  string paddle = 2;         // "left" or "right"
 }
 
 // Game state update (from server to client)
 message GameStateMessage {
-  string type = 1;                    // message type identifier
-  optional double left_paddle_data = 2;   // left paddle Y position
-  optional double right_paddle_data = 3;  // right paddle Y position
-  optional int32 clients = 4;             // number of connected clients
-  optional Ball ball = 5;                 // ball position and properties
-  optional int32 left_score = 6;          // left team score
-  optional int32 right_score = 7;         // right team score
-  optional string scored = 8;             // which team scored ("left" or "right")
-  optional string your_team = 9;          // assigned team for this client
+  optional double left_paddle_data = 1;   // left paddle Y position
+  optional double right_paddle_data = 2;  // right paddle Y position
+  optional int32 clients = 3;             // number of connected clients
+  optional Ball ball = 4;                 // ball position and properties
+  optional int32 left_score = 5;          // left team score
+  optional int32 right_score = 6;         // right team score
+  optional string scored = 7;             // which team scored ("left" or "right")
+  optional string your_team = 8;          // assigned team for this client
 }
 
 // Score update message (from server to client)
 message ScoreMessage {
-  string type = 1;           // "score"
-  int32 left_score = 2;      // left team score
-  int32 right_score = 3;     // right team score
-  string scored = 4;         // which team scored ("left" or "right")
+  int32 left_score = 1;      // left team score
+  int32 right_score = 2;     // right team score
+  string scored = 3;         // which team scored ("left" or "right")
 }
 
 // Initial game state (from server to client)
@@ -74,14 +86,16 @@ message ErrorMessage {
 
 // Union message for all possible messages
 message Message {
+  MsgType type = 1;
   oneof message_type {
-    InitMessage init = 1;
-    MovementMessage movement = 2;
-    GameStateMessage game_state = 3;
-    ScoreMessage score = 4;
-    InitialGameStateMessage initial_game_state = 5;
-    PaddlePositionsMessage paddle_positions = 6;
-    BallPositionMessage ball_position = 7;
-    ErrorMessage error = 8;
+    InitMessage init = 2;
+    MovementMessage movement = 3;
+    GameStateMessage game_state = 4;
+    ScoreMessage score = 5;
+    InitialGameStateMessage initial_game_state = 6;
+    PaddlePositionsMessage paddle_positions = 7;
+    BallPositionMessage ball_position = 8;
+    ErrorMessage error = 9;
   }
 }
+

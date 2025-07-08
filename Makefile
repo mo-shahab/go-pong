@@ -51,7 +51,7 @@ start-ts:
 	cd ./client && pnpm run dev
 
 start:
-	npx concurrently "cd server && go run main.go" "cd client && pnpm run dev"
+	npx concurrently "cd server && air" "cd client && pnpm run dev"
 
 # Format Go code
 go_fmt:

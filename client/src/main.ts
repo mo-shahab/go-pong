@@ -1,4 +1,4 @@
-import { Message, InitMessage } from "./proto/gopong";
+import { Message, InitMessage, MovementMessage, MsgType } from "./proto/gopong";
 
 interface GameData {
     leftPaddleData?: number;
@@ -15,11 +15,11 @@ interface GameData {
     scored?: string;
 }
 
-interface MovementData {
-    type: string;
-    direction: "up" | "down";
-    paddle: "left" | "right";
-}
+// interface MovementData {
+//     type: string;
+//     direction: "up" | "down";
+//     paddle: "left" | "right";
+// }
 
 // interface InitData {
 //     type: string;
@@ -154,8 +154,11 @@ socket.onopen = (): void => {
 
     // 2. Wrap the plain InitMessage object inside a plain Message object for the oneof
     const wrappedMessagePlain = {
+        type: MsgType.init,
         init: initDataPlain, // Assign the plain initData object to the 'init' field of the oneof
     };
+
+    console.log("Plain init message: ", wrappedMessagePlain)
 
     // 3. Use the static .encode() method on the Message type with the plain object
     //    and then .finish() to get the Uint8Array.
@@ -169,8 +172,25 @@ socket.onopen = (): void => {
     socket.send(encoded);
 };
 
-socket.onmessage = (event: MessageEvent): void => {
-    const data: GameData = JSON.parse(event.data);
+socket.onmessage = async (event: MessageEvent): void => {
+    // const data: GameData = JSON.parse(event.data);
+
+    const arrayBuffer = await event.data.arrayBuffer();
+    console.log("Binary stuff recieved from the server: ", arrayBuffer);
+    const bytes = new Uint8Array(arrayBuffer);
+    console.log("These are the bytes parsed from the array buffer: ", bytes);
+
+    const data = Message.decode(bytes);
+    console.log("Parsed data recevied from the server", data);
+
+    switch (key) {
+        case value:
+            
+            break;
+
+        default:
+            break;
+    }
 
     // Handle paddle positions
     if (data.leftPaddleData !== undefined) {
@@ -233,16 +253,30 @@ socket.onerror = (error: Event): void => {
 
 // Keyboard event handler
 document.addEventListener("keydown", (e: KeyboardEvent): void => {
-    let movement: MovementData | null = null;
+    let movement: MovementMessage | null = null;
+    let encoded: Message | null = null;
 
     if (e.key === "w") {
+
+        console.log("Button pressed");
         movement = { type: "move", direction: "up", paddle: "left" };
+        const wrappedMessagePlain = {
+            move: movement,
+        };
+        encoded: Uint8Array = Message.encode(wrappedMessagePlain).finish();
+
     } else if (e.key === "s") {
+
         movement = { type: "move", direction: "down", paddle: "left" };
+        const wrappedMessagePlain = {
+            move: movement, 
+        };
+        encoded: Uint8Array = Message.encode(wrappedMessagePlain).finish();
+
     }
 
     if (movement) {
-        socket.send(JSON.stringify(movement));
+        socket.send(encoded);
     }
 });
 
