@@ -119,35 +119,34 @@ func (wsh *WebSocketHandler) startBallUpdates() {
 
 		wsh.Mu.Lock()
 
-		// ballObject := &pb.Ball{
-		// 	x: wsh.BallVar.x,
-		// 	y: wsh.BallVar.Y,
-		// 	radius: wsh.BallVar.Radius,
-		// }
+		ballObject := &pb.Ball{
+			X: wsh.BallVar.X,
+			Y: wsh.BallVar.Y,
+			Radius: wsh.BallVar.Radius,
+		}
 
-		// ballMessage := &pb.BallMessage {
-		// 	ball: ballObject,
-		// }
+		ballPositionMessage := &pb.BallPositionMessage {
+			Ball: ballObject,
+		}
 
-		// message, err := proto.Marshal(ballMessage);
-		//
-		// if err != nil {
-		// 	log.Fatalln("Failed to encode the ball message: ", err)
-		// 	wsh.Mu.Unlock()
-		// 	continue
-		// }
+		wrappedMessage := &pb.Message {
+			Type: pb.MsgType_ball_position,
+			MessageType: &pb.Message_BallPosition {
+				BallPosition: ballPositionMessage,
+			},
+		}
 
-		// message := map[string]interface{}{
-		// 	"ball": map[string]float64{
-		// 		"x":      wsh.BallVar.X,
-		// 		"y":      wsh.BallVar.Y,
-		// 		"radius": wsh.BallVar.Radius,
-		// 	},
-		// }
+		message, err := proto.Marshal(wrappedMessage);
+
+		if err != nil {
+			log.Fatalln("Failed to encode the ball message: ", err)
+			wsh.Mu.Unlock()
+			continue
+		}
 
 		wsh.Mu.Unlock()
 
-		// wsh.broadcastToAll(message)
+		wsh.broadcastToAll(message)
 	}
 }
 
@@ -536,29 +535,23 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					gameRunning = true
 				}
 
-				// initialGameState := map[string]interface{}{
-				// 	"leftPaddleData":  wsh.LeftPaddleData.position,
-				// 	"rightPaddleData": wsh.RightPaddleData.position,
-				// 	"yourTeam":        client.team,
-				// 	"clients":         len(wsh.Connections),
-				// }
-
 				initialGameState := &pb.InitialGameStateMessage{
 					LeftPaddleData: wsh.LeftPaddleData.position,
 					RightPaddleData : wsh.RightPaddleData.position,
 					YourTeam : client.team,
-					// Clients : len(wsh.Connections),
+					Clients : int32(len(wsh.Connections)),
 				}
 
 				wrappedInitialGameState := &pb.Message{
+					Type: pb.MsgType_initial_game_state,
 					MessageType: &pb.Message_InitialGameState{
 						InitialGameState: initialGameState,
 					},
 				}
 
-				encoded, marshalInit := proto.Marshal(wrappedInitialGameState)
-				if marshalInit != nil {
-					log.Println("Failed to marshal Initial Game State Message:", marshalInit)
+				encoded, marshalInitErr := proto.Marshal(wrappedInitialGameState)
+				if marshalInitErr != nil {
+					log.Println("Failed to marshal Initial Game State Message:", marshalInitErr)
 					continue
 				}
 
@@ -569,7 +562,7 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			}
 
-		case pb.MsgType_movment:
+		case pb.MsgType_movement:
 			move := message.GetMovement()
 			log.Println("Movement Message: %+v", move)
 
@@ -620,12 +613,30 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			wsh.Mu.Unlock()
 
-			// gameState := map[string]float64{
-			// 	"leftPaddleData":  globalPaddlePositions.leftPaddle,
-			// 	"rightPaddleData": globalPaddlePositions.rightPaddle,
-			// }
-			// wsh.broadcastToAll(gameState)
+			clients := int32(len(wsh.Connections))
 
+			// optional fields should be sent as the address, because proto makes them pointers
+			gameState := &pb.GameStateMessage{
+				LeftPaddleData: &globalPaddlePositions.leftPaddle,
+				RightPaddleData : &globalPaddlePositions.rightPaddle,
+				YourTeam : &client.team,
+				Clients : &clients,
+			}
+
+			wrappedGameState := &pb.Message{
+				Type: pb.MsgType_game_state,
+				MessageType: &pb.Message_GameState{
+					GameState: gameState,
+				},
+			}
+
+			encoded, marshalErr := proto.Marshal(wrappedGameState)
+			if marshalErr != nil {
+				log.Println("Failed to marshal Game State Message:", marshalErr)
+				continue
+			}
+
+			client.sendQueue <- encoded
 			continue
 		}
 

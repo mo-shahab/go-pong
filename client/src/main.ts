@@ -158,7 +158,7 @@ socket.onopen = (): void => {
         init: initDataPlain, // Assign the plain initData object to the 'init' field of the oneof
     };
 
-    console.log("Plain init message: ", wrappedMessagePlain)
+    console.log("Plain init message: ", wrappedMessagePlain);
 
     // 3. Use the static .encode() method on the Message type with the plain object
     //    and then .finish() to get the Uint8Array.
@@ -180,65 +180,86 @@ socket.onmessage = async (event: MessageEvent): void => {
     const bytes = new Uint8Array(arrayBuffer);
     console.log("These are the bytes parsed from the array buffer: ", bytes);
 
-    const data = Message.decode(bytes);
-    console.log("Parsed data recevied from the server", data);
+    const message = Message.decode(bytes);
 
-    switch (key) {
-        case value:
-            
+    switch (message.type) {
+        case MsgType.initial_game_state:
+            const initial = message.initialGameState;
+            console.log("Initial game state received", initial);
+            leftPaddleY = initial.leftPaddleData ?? leftPaddleY;
+            rightPaddleY = initial.rightPaddleData ?? rightPaddleY;
+            // yourTeam = message.yourTeam; // if needed for controls
             break;
+
+        case MsgType.game_state:
+            console.log("Game state update received", message);
+            const gameState = message.gameState;
+
+            if (gameState.leftPaddleData !== undefined) {
+                console.log("Message about the left paddle data: ", gameState.leftPaddleData);
+                if (gameState.clients !== undefined && gameState.clients < 2) {
+                    leftPaddleY = Math.max(
+                        0,
+                        Math.min(leftPaddleY + gameState.leftPaddleData, gameHeight - paddleHeight)
+                    );
+                } else {
+                    leftPaddleY = gameState.leftPaddleData;
+                }
+            }
+
+            if (gameState.rightPaddleData !== undefined) {
+                if (gameState.clients !== undefined && gameState.clients < 2) {
+                    rightPaddleY = Math.max(
+                        0,
+                        Math.min(rightPaddleY + gameState.rightPaddleData, gameHeight - paddleHeight)
+                    );
+                } else {
+                    rightPaddleY = gameState.rightPaddleData;
+                }
+            }
+
+            break;
+
+        case MsgType.ball_position:
+            const ballPos = message.ballPosition;
+            ballX = ballPos.ball.x;
+            ballY = ballPos.ball.y;
+
+            break;
+            
+
+        case MsgType.error:
+            const error = message.error;
+            console.log("Error received from the server: ", error);
+            // yourTeam = message.yourTeam; // if needed for controls
+            break;
+
 
         default:
             break;
     }
 
-    // Handle paddle positions
-    if (data.leftPaddleData !== undefined) {
-        // If leftPaddleY is undefined, initialize it
-        if (leftPaddleY === undefined) {
-            leftPaddleY = data.leftPaddleData;
-        } else {
-            if (data.clients !== undefined && data.clients < 2) {
-                leftPaddleY = Math.max(0, Math.min(leftPaddleY + data.leftPaddleData, gameHeight - paddleHeight));
-            } else {
-                leftPaddleY = data.leftPaddleData;
-            }
-        }
-    }
-
-    if (data.rightPaddleData !== undefined) {
-        // If rightPaddleY is undefined, initialize it
-        if (rightPaddleY === undefined) {
-            rightPaddleY = data.rightPaddleData;
-        } else {
-            if (data.clients !== undefined && data.clients < 2) {
-                rightPaddleY = Math.max(0, Math.min(rightPaddleY + data.rightPaddleData, gameHeight - paddleHeight));
-            } else {
-                rightPaddleY = data.rightPaddleData;
-            }
-        }
-    }
 
     // Handle ball position
-    if (data.ball) {
-        ballX = data.ball.x;
-        ballY = data.ball.y;
-    }
+    // if (data.ball) {
+    //     ballX = data.ball.x;
+    //     ballY = data.ball.y;
+    // }
 
     // Handle score updates
-    if (data.type === 'score') {
-        leftScore = data.leftScore || 0;
-        rightScore = data.rightScore || 0;
-        scored = data.scored || '';
-        
-        // Start timer with appropriate message
-        let scoringTeam = "Team";
-        if (data.scored) {
-            scoringTeam = data.scored === 'left' ? "Left Team" : "Right Team";
-        }
-        
-        startTimer(3, `${scoringTeam} scored! Board will reset soon.`);
-    }
+    // if (data.type === 'score') {
+    //     leftScore = data.leftScore || 0;
+    //     rightScore = data.rightScore || 0;
+    //     scored = data.scored || '';
+    //
+    //     // Start timer with appropriate message
+    //     let scoringTeam = "Team";
+    //     if (data.scored) {
+    //         scoringTeam = data.scored === 'left' ? "Left Team" : "Right Team";
+    //     }
+    //
+    //     startTimer(3, `${scoringTeam} scored! Board will reset soon.`);
+    // }
     // Redraw the game with updated positions
     drawGame();
 };
@@ -254,24 +275,26 @@ socket.onerror = (error: Event): void => {
 // Keyboard event handler
 document.addEventListener("keydown", (e: KeyboardEvent): void => {
     let movement: MovementMessage | null = null;
-    let encoded: Message | null = null;
+    let encoded: Uint8Array | null = null;
 
     if (e.key === "w") {
 
         console.log("Button pressed");
-        movement = { type: "move", direction: "up", paddle: "left" };
+        movement = { direction: "up", paddle: "left" };
         const wrappedMessagePlain = {
-            move: movement,
+            type: MsgType.movement,
+            movement: movement,
         };
-        encoded: Uint8Array = Message.encode(wrappedMessagePlain).finish();
+        encoded = Message.encode(wrappedMessagePlain).finish();
 
     } else if (e.key === "s") {
 
-        movement = { type: "move", direction: "down", paddle: "left" };
+        movement = { direction: "down", paddle: "left" };
         const wrappedMessagePlain = {
-            move: movement, 
+            type: MsgType.movement,
+            movement: movement, 
         };
-        encoded: Uint8Array = Message.encode(wrappedMessagePlain).finish();
+        encoded = Message.encode(wrappedMessagePlain).finish();
 
     }
 
