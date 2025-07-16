@@ -4,63 +4,63 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/mo-shahab/go-pong/client"
-	"sync"
 	"log"
+	"sync"
 )
 
 // typedef to define the Room
 type Room struct {
-	ID string;
-	Host *websocket.Conn;
-	Clients map[string] *client.Client;  
-	MaxPlayers int;
-	Mu sync.Mutex; 
+	ID         string
+	Host       *websocket.Conn
+	Clients    map[string]*client.Client
+	MaxPlayers int
+	Mu         sync.Mutex
 }
 
 // state of all the rooms
 type RoomManager struct {
-	Rooms map[string]*Room;
-	Mu sync.Mutex; 
+	Rooms map[string]*Room
+	Mu    sync.Mutex
 }
 
 func NewRoomManager() *RoomManager {
-	return &RoomManager {
+	return &RoomManager{
 		Rooms: make(map[string]*Room),
 	}
 }
 
-// helpers 
+// helpers
 func generateRoomId() string {
 	return uuid.New().String()[:6]
 }
 
 // should return the room id
-func (rm *RoomManager) CreateRoom (host *client.Client, maxPlayers int) string {
-	rm.Mu.Lock();
+func (rm *RoomManager) CreateRoom(host *client.Client, maxPlayers int) string {
+	rm.Mu.Lock()
 
 	// should write this function probably
-	roomId := generateRoomId();
+	roomId := generateRoomId()
 
 	// this should basically create room with the structure above
-	// so it will need an object of the type Room and stuff right ?? 
+	// so it will need an object of the type Room and stuff right ??
 
 	room := &Room{
-		ID: roomId,
-		Host: host.Conn,
-		Clients: map[string]*client.Client{host.ID: host},
+		ID:         roomId,
+		Host:       host.Conn,
+		Clients:    map[string]*client.Client{host.ID: host},
 		MaxPlayers: maxPlayers,
 	}
-	
-	rm.Rooms[roomId] = room
-	log.Printf("Created Room with room id: %s, with host: %s", roomId, host.ID);
 
-	rm.Mu.Unlock();
-	
-	return  roomId
+	rm.Rooms[roomId] = room
+	log.Printf("Created Room with room id: %s, with host: %s", roomId, host.ID)
+
+	rm.Mu.Unlock()
+
+	return roomId
 }
 
-func (rm *RoomManager) JoinRoom (roomId string, client *client.Client) (bool, string) {		
-	rm.Mu.Lock();
+func (rm *RoomManager) JoinRoom(roomId string, client *client.Client) (bool, string) {
+	rm.Mu.Lock()
 	defer rm.Mu.Unlock()
 
 	room, exists := rm.Rooms[roomId]
@@ -75,14 +75,13 @@ func (rm *RoomManager) JoinRoom (roomId string, client *client.Client) (bool, st
 		return false, "Room is full"
 	}
 
-
-	room.Clients[client.ID] = client;
-	log.Println("Client %s joined the Room with room id: %s", client.ID, roomId);
+	room.Clients[client.ID] = client
+	log.Println("Client %s joined the Room with room id: %s", client.ID, roomId)
 
 	return true, ""
 }
 
-func (rm *RoomManager) RemoveClient (roomId string, clientId string) {
+func (rm *RoomManager) RemoveClient(roomId string, clientId string) {
 	rm.Mu.Lock()
 	defer rm.Mu.Unlock()
 
@@ -96,7 +95,7 @@ func (rm *RoomManager) RemoveClient (roomId string, clientId string) {
 
 	delete(room.Clients, clientId)
 
-	if (room.MaxPlayers == 0 || room.Clients[clientId].Conn == room.Host){
+	if room.MaxPlayers == 0 || room.Clients[clientId].Conn == room.Host {
 
 		for _, client := range room.Clients {
 			// write the protobuf message saying that the room is closed (broadcast it basically)
@@ -108,7 +107,7 @@ func (rm *RoomManager) RemoveClient (roomId string, clientId string) {
 	}
 }
 
-func (rm *RoomManager) getRoom (roomId string) (*Room, bool) {
+func (rm *RoomManager) getRoom(roomId string) (*Room, bool) {
 	rm.Mu.Lock()
 	defer rm.Mu.Unlock()
 

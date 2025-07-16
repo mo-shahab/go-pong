@@ -9,5 +9,5 @@ type Client struct {
 	SendQueue chan []byte
 	Team      string
 	ID        string
-	RoomId string
+	RoomId    string
 }

@@ -9,7 +9,7 @@ import (
 func main() {
 	wsh := wsserver.NewWebSocketHandler()
 
-	// no need to server files on http now 
+	// no need to server files on http now
 	// fs := http.FileServer(http.Dir("../client/"))
 	// http.Handle("/", fs)
 
