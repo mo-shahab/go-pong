@@ -176,9 +176,7 @@ socket.onmessage = async (event: MessageEvent): void => {
     // const data: GameData = JSON.parse(event.data);
 
     const arrayBuffer = await event.data.arrayBuffer();
-    console.log("Binary stuff recieved from the server: ", arrayBuffer);
     const bytes = new Uint8Array(arrayBuffer);
-    console.log("These are the bytes parsed from the array buffer: ", bytes);
 
     const message = Message.decode(bytes);
 
@@ -226,14 +224,29 @@ socket.onmessage = async (event: MessageEvent): void => {
             ballY = ballPos.ball.y;
 
             break;
-            
+
+        case MsgType.score:
+            console.log("Scored!");
+            const score = message.score;
+            console.log("Score Message: ", score);
+            leftScore = score.leftScore || 0;
+            rightScore = score.rightScore || 0;
+            scored = score.scored || '';
+
+            // Start timer with appropriate message
+            let scoringTeam = "Team";
+            if (score.scored) {
+                scoringTeam = score.scored === 'left' ? "Left Team" : "Right Team";
+                startTimer(3, `${scoringTeam} scored! Board will reset soon.`);
+            }
+
+            break;
 
         case MsgType.error:
             const error = message.error;
             console.log("Error received from the server: ", error);
             // yourTeam = message.yourTeam; // if needed for controls
             break;
-
 
         default:
             break;
