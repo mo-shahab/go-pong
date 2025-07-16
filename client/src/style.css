@@ -2,11 +2,9 @@
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-
   color-scheme: light dark;
   color: rgba(255, 255, 255, 0.87);
   background-color: #242424;
-
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -57,6 +55,8 @@ h1 {
 
 .card {
   padding: 2em;
+  background-color: #1a1a1a;
+  border-radius: 8px;
 }
 
 .read-the-docs {
@@ -82,6 +82,51 @@ button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
 }
 
+.action-button {
+  background-color: #4CAF50;
+  color: white;
+  padding: 0.8em 1.6em;
+  margin: 10px;
+}
+.action-button:hover {
+  background-color: #45a049;
+  border-color: #646cff;
+}
+
+.room-input {
+  background-color: #333;
+  color: white;
+  border: 1px solid #444;
+  border-radius: 8px;
+  padding: 0.6em;
+  margin: 10px;
+  width: 200px;
+  font-size: 1em;
+}
+
+.input-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.room-code {
+  margin: 20px;
+  font-size: 1.5em;
+  font-weight: bold;
+}
+
+.status {
+  margin: 10px;
+  font-size: 1.2em;
+  color: #ff5555;
+}
+
+.hidden {
+  display: none;
+}
+
 @media (prefers-color-scheme: light) {
   :root {
     color: #213547;
@@ -91,6 +136,21 @@ button:focus-visible {
     color: #747bff;
   }
   button {
+    background-color: #f9f9f9;
+  }
+  .action-button {
+    background-color: #4CAF50;
+    color: white;
+  }
+  .action-button:hover {
+    background-color: #45a049;
+  }
+  .room-input {
+    background-color: #f0f0f0;
+    color: #213547;
+    border: 1px solid #ccc;
+  }
+  .card {
     background-color: #f9f9f9;
   }
 }

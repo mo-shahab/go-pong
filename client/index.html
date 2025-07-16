@@ -1,13 +1,28 @@
 <!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Ping Pong Game</title>
-        <link rel="stylesheet" href="styles/index.css">
-    </head>
-    <body>
-        <canvas id="game-canvas"></canvas>
-        <script type="module" src="./src/main.ts"></script>
-    </body>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ping Pong Game - Join Room</title>
+    <link rel="stylesheet" href="styles/index.css">
+</head>
+<body>
+    <div id="app">
+        <div id="room-management" class="card">
+            <h1>Ping Pong Game</h1>
+            <button id="create-room" class="action-button">Create Room</button>
+            <details id="join-section" class="join-section">
+                <summary class="action-button">Join Room</summary>
+                <div class="input-group">
+                    <input id="host-ip-input" class="room-input" placeholder="Host IP (e.g., 203.0.113.1:8080)" />
+                    <input id="room-code-input" class="room-input" placeholder="Room Code (e.g., ABCD12)" />
+                    <button id="join-room" class="action-button">Join</button>
+                </div>
+            </details>
+            <div id="room-code-display" class="room-code"></div>
+            <div id="status" class="status"></div>
+        </div>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
+</body>
 </html>

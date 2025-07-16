@@ -14,10 +14,46 @@ enum MsgType {
   initial_game_state = 5; // from server to client
   paddle_positions = 6;
   ball_position = 7;
-  error = 8;
+  room_create_request = 8;
+  room_create_response = 9;
+  room_joi_request = 10;
+  room_join_response = 11;
+  signal_request = 12;
+  signal_response = 13;
+  error = 14;
 }
 
 // ==========================
+
+// Signaling messages
+message SignalRequest {
+  string client_id = 1;
+}
+
+message SignalResponse {
+  string public_ip = 1;
+  string client_id = 2;
+}
+
+// Room Related Messages
+message RoomCreateRequest {
+  int32 max_players = 1;
+}
+
+message RoomCreateResponse {
+  string room_id = 1;
+}
+
+message RoomJoinRequest {
+  string room_id = 1;
+}
+
+message RoomJoinResponse {
+  bool success = 1;
+  string error = 2;
+  string your_team = 3;
+  int32 clients = 4;
+}
 
 // Ball position and properties
 message Ball {
@@ -95,7 +131,13 @@ message Message {
     InitialGameStateMessage initial_game_state = 6;
     PaddlePositionsMessage paddle_positions = 7;
     BallPositionMessage ball_position = 8;
-    ErrorMessage error = 9;
+    RoomCreateRequest room_create_request = 9;
+    RoomCreateResponse room_create_response = 10;
+    RoomJoinRequest room_join_request = 11;
+    RoomJoinResponse room_join_response = 12;
+    SignalRequest signal_request = 13;
+    SignalResponse signal_response = 14;
+    ErrorMessage error = 15;
   }
 }
 

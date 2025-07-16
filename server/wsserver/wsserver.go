@@ -2,6 +2,8 @@ package wsserver
 
 import (
 	"github.com/gorilla/websocket"
+	"github.com/mo-shahab/go-pong/client"
+	"github.com/mo-shahab/go-pong/room"
 	"github.com/mo-shahab/go-pong/ball"
 	"github.com/mo-shahab/go-pong/canvas"
 	"github.com/mo-shahab/go-pong/paddle"
@@ -23,13 +25,6 @@ type paddleData struct {
 	position    float64
 }
 
-type Client struct {
-	conn      *websocket.Conn
-	sendQueue chan []byte
-	team      string
-	id        string
-}
-
 type paddlePositions struct {
 	leftPaddle  float64
 	rightPaddle float64
@@ -45,11 +40,12 @@ type WebSocketHandler struct {
 	CanvasVar       canvas.Canvas
 	PaddleVar       paddle.Paddle
 	Mu              sync.Mutex
-	Connections     map[string]*Client
+	Connections     map[string]*client.Client
 	ConnToId        map[*websocket.Conn]string
 	BallRunning     bool
 	BallVisible     bool
 	Scores          scores.Scores
+	RoomManager *room.RoomManager
 }
 
 // ball constants
@@ -71,8 +67,9 @@ var globalPaddlePositions = &paddlePositions{}
 func NewWebSocketHandler() *WebSocketHandler {
 	return &WebSocketHandler{
 		Upgrader:    websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
-		Connections: make(map[string]*Client),
+		Connections: make(map[string]*client.Client),
 		ConnToId:    make(map[*websocket.Conn]string),
+		RoomManager: room.NewRoomManager(),
 	}
 }
 
@@ -84,7 +81,7 @@ func (wsh *WebSocketHandler) broadcastToAll(message []byte) {
 
 	for _, client := range wsh.Connections {
 		select {
-		case client.sendQueue <- message:
+		case client.SendQueue <- message:
 			// log.Println("Message sent to client:", conn.RemoteAddr())
 		default:
 			log.Println("Dropping message, send queue full for client")
@@ -92,9 +89,6 @@ func (wsh *WebSocketHandler) broadcastToAll(message []byte) {
 	}
 }
 
-func (wsh *WebSocketHandler) broadcastBallPosition(){
-
-}
 // ---------------------------------------------------
 
 
@@ -267,14 +261,14 @@ func randomVariation() float64 {
 	return (rand.Float64() - 0.5) * 2
 }
 
-func (wsh *WebSocketHandler) updatePaddlePositions(client *Client, direction string) {
+func (wsh *WebSocketHandler) updatePaddlePositions(client *client.Client, direction string) {
 	wsh.Mu.Lock()
 	defer wsh.Mu.Unlock()
 
 	var paddle *paddleData
 	var globalPosition *float64
 
-	if client.team == "left" {
+	if client.Team == "left" {
 		paddle = &wsh.LeftPaddleData
 		globalPosition = &globalPaddlePositions.leftPaddle
 	} else {
@@ -382,13 +376,13 @@ func (wsh *WebSocketHandler) disconnectPlayer(conn *websocket.Conn) {
 
 	client, exists := wsh.Connections[clientId]
 
-	if client.team == "left" {
+	if client.Team == "left" {
 		wsh.LeftPaddleData.players--
 	} else {
 		wsh.RightPaddleData.players--
 	}
 
-	close(client.sendQueue)
+	close(client.SendQueue)
 	delete(wsh.Connections, clientId)
 	delete(wsh.ConnToId, conn)
 
@@ -410,20 +404,20 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	clientId := conn.RemoteAddr().String() + "_" + time.Now().String()
 
-	client := &Client{
-		conn:      conn,
-		sendQueue: make(chan []byte, 100), // Increased buffer size
-		id:        clientId,
+	client := &client.Client{
+		Conn:      conn,
+		SendQueue: make(chan []byte, 100), // Increased buffer size
+		ID:        clientId,
 	}
 
 	if len(wsh.Connections) < 2 {
 		log.Println("Total number of connections: ", len(wsh.Connections))
 		log.Println("team assigned")
 		if len(wsh.Connections)%2 == 0 {
-			client.team = "left"
+			client.Team = "left"
 			wsh.LeftPaddleData.players++
 		} else {
-			client.team = "right"
+			client.Team = "right"
 			wsh.RightPaddleData.players++
 		}
 	} else {
@@ -432,21 +426,21 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		randomNumber := rand.Intn(100)
 		log.Println("this is the randomNumber", randomNumber)
 		if randomNumber%2 == 0 {
-			client.team = "left"
+			client.Team = "left"
 		} else {
-			client.team = "right"
+			client.Team = "right"
 		}
 	}
 
-	log.Println("this is the client", client.id, client.team)
+	log.Println("this is the client", client.ID, client.Team)
 
 	// a message queue, that sends the data to the client
 	go func() {
-		for msg := range client.sendQueue {
-			err := client.conn.WriteMessage(websocket.BinaryMessage, msg)
+		for msg := range client.SendQueue {
+			err := client.Conn.WriteMessage(websocket.BinaryMessage, msg)
 			if err != nil {
 				log.Println("Binary Message Write error (go routine sendqueue):", err)
-				client.conn.Close()
+				client.Conn.Close()
 				wsh.disconnectPlayer(conn)
 				return
 			}
@@ -494,7 +488,7 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			client.sendQueue <- encoded
+			client.SendQueue <- encoded
 		}
 
 
@@ -548,7 +542,7 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				initialGameState := &pb.InitialGameStateMessage{
 					LeftPaddleData: wsh.LeftPaddleData.position,
 					RightPaddleData : wsh.RightPaddleData.position,
-					YourTeam : client.team,
+					YourTeam : client.Team,
 					Clients : int32(len(wsh.Connections)),
 				}
 
@@ -566,7 +560,7 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 
 				log.Println("even after the game is initialized it still enters this block", initialized)
-				client.sendQueue <- encoded
+				client.SendQueue <- encoded
 
 				continue
 
@@ -588,7 +582,7 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			//log.Println("updates of global positions, left paddle and right paddle  ",
 			//globalPaddlePositions, wsh.LeftPaddleData.position, wsh.RightPaddleData.position)
 
-			if client.team == "left" {
+			if client.Team == "left" {
 				newLeftPaddlePos := globalPaddlePositions.leftPaddle + movement
 
 				if newLeftPaddlePos >= 0 && newLeftPaddlePos+wsh.PaddleVar.Height <= wsh.CanvasVar.Height {
@@ -629,7 +623,7 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			gameState := &pb.GameStateMessage{
 				LeftPaddleData: &globalPaddlePositions.leftPaddle,
 				RightPaddleData : &globalPaddlePositions.rightPaddle,
-				YourTeam : &client.team,
+				YourTeam : &client.Team,
 				Clients : &clients,
 			}
 
@@ -646,7 +640,7 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			client.sendQueue <- encoded
+			client.SendQueue <- encoded
 			continue
 		}
 
