@@ -8,7 +8,40 @@
 </head>
 <body>
     <div id="app">
-        <canvas id="game-canvas"></canvas>
+        <div id="game-container">
+            <!-- Game Info Header -->
+            <div class="game-info">
+                <div class="room-code" id="room-code-display">Room Code: Loading...</div>
+                <div class="status" id="status-display">Connecting...</div>
+            </div>
+            
+            <!-- Game Play Area -->
+            <div class="game-play-area">
+                <!-- Left Player List -->
+                <div class="player-list-left">
+                    <h3>Left Team</h3>
+                    <div id="left-players">
+                        <p>Waiting for players...</p>
+                    </div>
+                </div>
+                
+                <!-- Canvas Container -->
+                <div class="canvas-container">
+                    <canvas id="game-canvas"></canvas>
+                    <!-- <div class="game-controls"> -->
+                    <!--     <p>Controls: W/S - Move Left Paddle | ↑/↓ - Move Right Paddle</p> -->
+                    <!-- </div> -->
+                </div>
+                
+                <!-- Right Player List -->
+                <div class="player-list-right">
+                    <h3>Right Team</h3>
+                    <div id="right-players">
+                        <p>Waiting for players...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
     <script type="module" src="./src/game.ts"></script>
 </body>
