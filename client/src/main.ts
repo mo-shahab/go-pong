@@ -12,10 +12,23 @@ createButton.addEventListener("click", () => {
 
     const wrappedMessagePlain = {
         type: MsgType.room_create_request,
-        room_create_request: roomCreateRequest, 
+        roomCreateRequest: roomCreateRequest, 
     };
 
     const encoded: Uint8Array = Message.encode(wrappedMessagePlain).finish();
     socket.send(encoded);
 })
 
+socket.onmessage = async (event: MessageEvent): void => {
+    const arrayBuffer = await event.data.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+
+    const message = Message.decode(bytes);
+    switch (message.type) {
+
+        case MsgType.room_create_response:
+            const response = message.roomCreateResponse;
+            console.log("Room Created Succesfully", response);
+            break;
+    }
+}

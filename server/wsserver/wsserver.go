@@ -86,9 +86,7 @@ func (wsh *WebSocketHandler) broadcastToAll(message []byte) {
 		default:
 			log.Println("Dropping message, send queue full for client")
 		}
-	}
-}
-
+	} }
 // ---------------------------------------------------
 
 
@@ -493,6 +491,33 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 
 		switch message.Type {			
+		case pb.MsgType_room_create_request:
+			room_create_req := message.GetRoomCreateRequest()
+			log.Println("Recieved a room create request: %+v", room_create_req)
+			log.Println("Max Players, ", room_create_req.MaxPlayers)
+
+			roomId := wsh.RoomManager.CreateRoom(client, int(room_create_req.MaxPlayers))
+			log.Println("Generated Room Id: ", roomId);
+
+			responseMessage := &pb.RoomCreateResponse {
+				RoomId: roomId,
+			}
+
+			wrappedMessage := &pb.Message{
+				Type: pb.MsgType_room_create_response,
+				MessageType: &pb.Message_RoomCreateResponse{
+					RoomCreateResponse: responseMessage,
+				},
+			}
+
+			encoded, marshalErr := proto.Marshal(wrappedMessage)
+			if marshalErr != nil {
+				log.Println("Failed to marshal ErrorMessage:", marshalErr)
+				continue
+			}
+
+			client.SendQueue <- encoded
+			break;
 
 		case pb.MsgType_init:
 			init := message.GetInit()

@@ -222,27 +222,6 @@ socket.onmessage = async (event: MessageEvent): void => {
             break;
     }
 
-
-    // Handle ball position
-    // if (data.ball) {
-    //     ballX = data.ball.x;
-    //     ballY = data.ball.y;
-    // }
-
-    // Handle score updates
-    // if (data.type === 'score') {
-    //     leftScore = data.leftScore || 0;
-    //     rightScore = data.rightScore || 0;
-    //     scored = data.scored || '';
-    //
-    //     // Start timer with appropriate message
-    //     let scoringTeam = "Team";
-    //     if (data.scored) {
-    //         scoringTeam = data.scored === 'left' ? "Left Team" : "Right Team";
-    //     }
-    //
-    //     startTimer(3, `${scoringTeam} scored! Board will reset soon.`);
-    // }
     // Redraw the game with updated positions
     drawGame();
 };

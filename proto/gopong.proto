@@ -16,7 +16,7 @@ enum MsgType {
   ball_position = 7;
   room_create_request = 8;
   room_create_response = 9;
-  room_joi_request = 10;
+  room_join_request = 10;
   room_join_response = 11;
   signal_request = 12;
   signal_response = 13;
