@@ -20,7 +20,10 @@ enum MsgType {
   room_join_response = 11;
   signal_request = 12;
   signal_response = 13;
-  error = 14;
+  waiting_room_state = 14;
+  game_start = 15;
+  room_closed = 16;
+  error = 17;
 }
 
 // ==========================
@@ -120,6 +123,30 @@ message ErrorMessage {
   string status = 2;              // status message
 }
 
+message Room {
+  string id = 1;
+  int32 max_players = 2;  
+}
+
+// Waiting Room State message (from server to client)
+message WaitingRoomStateMessage {
+  Room room = 1;
+  int32 current_players = 2;
+  int32 time_left = 3;
+  bool is_active = 4;
+}
+
+// Game Start message (from server to client)
+message GameStartMessage {
+  string room_id = 1;
+}
+
+// Room close message (from server to client)
+message RoomClosedMessage {
+  string room_id = 1;
+  string reason = 2;
+}
+
 // Union message for all possible messages
 message Message {
   MsgType type = 1;
@@ -137,7 +164,10 @@ message Message {
     RoomJoinResponse room_join_response = 12;
     SignalRequest signal_request = 13;
     SignalResponse signal_response = 14;
-    ErrorMessage error = 15;
+    WaitingRoomStateMessage waiting_room_state = 15;
+    GameStartMessage game_start = 16;
+    RoomClosedMessage room_closed = 17;
+    ErrorMessage error = 18;
   }
 }
 

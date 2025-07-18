@@ -1,6 +1,7 @@
 package room
 
 import (
+	"context"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/mo-shahab/go-pong/client"
@@ -23,11 +24,34 @@ type RoomManager struct {
 	Mu    sync.Mutex
 }
 
+// waiting room status
+type WaitingRoomState struct {
+	Room *Room
+	CurrentPlayers int
+	TimeLeft int
+	IsActive bool
+	Ctx context.Context
+	Cancel context.CancelFunc
+	Mu sync.Mutex
+}
+
 func NewRoomManager() *RoomManager {
 	return &RoomManager{
 		Rooms: make(map[string]*Room),
 	}
 }
+
+func NewWaitingRoomState(room *Room, timeLeft int, ctx context.Context, cancel context.CancelFunc) *WaitingRoomState {
+	return &WaitingRoomState{
+		Room:           room,
+		CurrentPlayers: len(room.Clients),
+		TimeLeft:       timeLeft,
+		IsActive:       true,
+		Ctx:            ctx,
+		Cancel:         cancel,
+	}
+}
+
 
 // helpers
 func generateRoomId() string {
@@ -107,7 +131,7 @@ func (rm *RoomManager) RemoveClient(roomId string, clientId string) {
 	}
 }
 
-func (rm *RoomManager) getRoom(roomId string) (*Room, bool) {
+func (rm *RoomManager) GetRoom(roomId string) (*Room, bool) {
 	rm.Mu.Lock()
 	defer rm.Mu.Unlock()
 

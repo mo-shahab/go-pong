@@ -1,6 +1,7 @@
 package wsserver
 
 import (
+	"context"
 	"github.com/gorilla/websocket"
 	"github.com/mo-shahab/go-pong/ball"
 	"github.com/mo-shahab/go-pong/canvas"
@@ -46,6 +47,7 @@ type WebSocketHandler struct {
 	BallVisible     bool
 	Scores          scores.Scores
 	RoomManager     *room.RoomManager
+	WaitingRooms map[string]*room.WaitingRoomState
 }
 
 // ball constants
@@ -62,6 +64,12 @@ const (
 	friction     = 0.9
 )
 
+// waiting room constants
+const (
+	MinPlayersToStart = 2
+	WaitingRoomDuration = 90
+)
+
 var globalPaddlePositions = &paddlePositions{}
 
 func NewWebSocketHandler() *WebSocketHandler {
@@ -70,8 +78,232 @@ func NewWebSocketHandler() *WebSocketHandler {
 		Connections: make(map[string]*client.Client),
 		ConnToId:    make(map[*websocket.Conn]string),
 		RoomManager: room.NewRoomManager(),
+		WaitingRooms: make(map[string]*room.WaitingRoomState),
 	}
 }
+
+// --------------------------------------------------
+// Waiting Room Functions
+
+func (wsh *WebSocketHandler) startWaitingRoom(roomId string) {
+	wsh.Mu.Lock()
+	defer wsh.Mu.Unlock()
+	
+	roomObj, exists := wsh.RoomManager.GetRoom(roomId)
+	if !exists {
+		log.Println("The room does not exist")
+		return
+	}
+	
+	ctx, cancel := context.WithTimeout(
+		context.Background(), WaitingRoomDuration*time.Second,
+	)
+	
+	waitingRoom := room.NewWaitingRoomState(roomObj, WaitingRoomDuration, ctx, cancel)
+	wsh.WaitingRooms[roomId] = waitingRoom
+	go wsh.runWaitingRoom(waitingRoom)
+	log.Println("Started waiting room for roomId: ", roomId)
+}
+
+func (wsh *WebSocketHandler) runWaitingRoom (waitingRoom *room.WaitingRoomState) {
+	ticker := time.NewTicker(32 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <- waitingRoom.Ctx.Done():
+			log.Println("Waiting room %s cancelled", waitingRoom.Room.ID)
+		
+		case <- ticker.C:
+			waitingRoom.Mu.Lock()
+			
+			if !waitingRoom.IsActive {
+				waitingRoom.Mu.Unlock()
+				return
+			}
+
+			waitingRoom.TimeLeft--
+
+			// broadcast the timer for the client
+			
+			if waitingRoom.CurrentPlayers >= MinPlayersToStart && waitingRoom.CurrentPlayers >= waitingRoom.Room.MaxPlayers {
+				log.Println("Room %s has enough players, starting game immediately", waitingRoom.Room.ID)
+				waitingRoom.IsActive = false
+				waitingRoom.Mu.Unlock()
+				wsh.startGame(waitingRoom.Room.ID)
+				return
+			}
+
+			if waitingRoom.TimeLeft <= 0 {
+				log.Println("Waiting time has been ended")
+				waitingRoom.IsActive = false
+				waitingRoom.Mu.Unlock()
+
+				if waitingRoom.CurrentPlayers >= MinPlayersToStart {
+					wsh.startGame(waitingRoom.Room.ID)
+				} else {
+					wsh.closeRoom(waitingRoom.Room.ID, "")
+				}
+
+				return
+			}
+
+		waitingRoom.Mu.Unlock()
+		}
+	}	
+}
+
+func (wsh *WebSocketHandler) broadcastWaitingRoomMessage(waitingRoom *room.WaitingRoomState) {
+
+	roomMessage := &pb.Room {
+		Id: waitingRoom.Room.ID,
+		MaxPlayers: int32(waitingRoom.Room.MaxPlayers),
+	}
+	
+	waitingRoomMessage := &pb.WaitingRoomStateMessage {
+		Room: roomMessage,
+		CurrentPlayers: int32(waitingRoom.CurrentPlayers),
+		TimeLeft: int32(waitingRoom.TimeLeft),
+		IsActive: waitingRoom.IsActive,
+	}
+
+	wrappedMessage := &pb.Message {
+		Type: pb.MsgType_waiting_room_state,
+		MessageType: &pb.Message_WaitingRoomState {
+			WaitingRoomState: waitingRoomMessage,
+		},
+	}
+
+	encoded, err := proto.Marshal(wrappedMessage)
+	
+	if err != nil {
+		log.Println("Failed to marshal the waiting room message")
+		return
+	}
+
+	wsh.broadcastToRoom(waitingRoom.Room.ID, encoded)
+}
+
+func (wsh *WebSocketHandler) addPlayerToWaitingRoom(roomId string, client *client.Client) bool {
+	wsh.Mu.Lock()
+	defer wsh.Mu.Unlock()
+
+	waitingRoom, exists := wsh.WaitingRooms[roomId]
+	if !exists {
+		log.Println("Waiting Room does not exist")
+	}
+
+	waitingRoom.Mu.Lock()
+	defer waitingRoom.Mu.Unlock()
+
+	if waitingRoom.CurrentPlayers >= waitingRoom.Room.MaxPlayers {
+		return false
+	}	
+
+	waitingRoom.CurrentPlayers++
+
+	client.RoomId = roomId
+
+	log.Println("Player %s joined room %s. Current Players: %d/%d", 
+		client.ID, 
+		roomId, 
+		waitingRoom.CurrentPlayers, 
+		waitingRoom.Room.MaxPlayers,
+		)
+
+	return true
+}
+
+func (wsh *WebSocketHandler) removePlayerFromRoom (roomId string, client client.Client) bool {
+	wsh.Mu.Lock()
+	defer wsh.Mu.Unlock()
+
+	waitingRoom, exists := wsh.WaitingRooms[roomId]
+	if !exists {
+		log.Println("Waiting Room does not exist")
+	}
+	
+	waitingRoom.Mu.Lock()
+	defer waitingRoom.Mu.Unlock()
+
+	if waitingRoom.CurrentPlayers <= 0 {
+		return false
+	}
+
+	waitingRoom.CurrentPlayers--
+	waitingRoom.IsActive = false
+	waitingRoom.Cancel()
+	delete(wsh.WaitingRooms, roomId)
+
+	log.Println("Removed the client from the waiting room")
+	return true
+}
+
+func (wsh *WebSocketHandler) startGame (roomId string) {
+	wsh.Mu.Lock()
+	defer wsh.Mu.Unlock()
+
+	waitingRoom, exists := wsh.WaitingRooms[roomId]
+	if exists {
+		waitingRoom.Cancel()
+		delete(wsh.WaitingRooms, roomId)
+	}
+
+	gameStartMessage := &pb.GameStartMessage {
+		RoomId: waitingRoom.Room.ID,
+	}
+
+	wrappedMessage := &pb.Message {
+		Type: pb.MsgType_game_start,
+		MessageType: &pb.Message_GameStart {
+			GameStart: gameStartMessage,
+		},
+	}
+
+	encoded, err := proto.Marshal(wrappedMessage)
+
+	if err != nil {
+		log.Println("Error occured while marshaling: ", err)
+	}
+
+	wsh.broadcastToRoom(roomId, encoded)
+}
+
+func (wsh *WebSocketHandler) closeRoom(roomId string, reason string) {
+	wsh.Mu.Lock()
+	defer wsh.Mu.Unlock()
+	
+	if waitingRoom, exists := wsh.WaitingRooms[roomId]; exists {
+		waitingRoom.Cancel()
+		delete(wsh.WaitingRooms, roomId)
+	}
+	
+	// Send room closed message
+	roomClosedMessage := &pb.RoomClosedMessage{
+		RoomId: roomId,
+		Reason: reason,
+	}
+	
+	wrappedMessage := &pb.Message{
+		Type: pb.MsgType_room_closed,
+		MessageType: &pb.Message_RoomClosed{
+			RoomClosed: roomClosedMessage,
+		},
+	}
+	
+	encoded, err := proto.Marshal(wrappedMessage)
+	if err != nil {
+		log.Printf("Failed to marshal room closed message: %v", err)
+		return
+	}
+	
+	wsh.broadcastToRoom(roomId, encoded)
+	
+	log.Printf("Room %s closed: %s", roomId, reason)
+}
+
+
+//---------------------------------------------------
 
 // ---------------------------------------------------
 // Broadcast functions
@@ -85,6 +317,21 @@ func (wsh *WebSocketHandler) broadcastToAll(message []byte) {
 			// log.Println("Message sent to client:", conn.RemoteAddr())
 		default:
 			log.Println("Dropping message, send queue full for client")
+		}
+	}
+}
+
+func (wsh *WebSocketHandler) broadcastToRoom(roomId string, message []byte) {
+	wsh.Mu.Lock()
+	defer wsh.Mu.Unlock()
+
+	for _, client := range wsh.Connections {
+		if client.RoomId == roomId {
+			select {
+			case client.SendQueue <- message:
+			default:
+				log.Printf("Dropping message, send queue full for client %s", client.ID)
+			}
 		}
 	}
 }
@@ -672,26 +919,8 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// client.sendQueue <- map[string]string{"status": "Message processed"}
-
 		if gameRunning && initialized {
 			log.Println("game is running")
-			/*
-				gameState := map[string]interface{}{
-					"leftPaddleData":  globalPaddlePositions,
-					"rightPaddleData": wsh.RightPaddleData.position,
-					"yourTeam":        client.team,
-					"clients":         len(wsh.Connections),
-				}
-			*/
 		}
-
-		// var movement float64
-		// if msg.Direction == "up" {
-		// 	movement = -30
-		// } else if msg.Direction == "down" {
-		// 	movement = 30
-		// }
-
 	}
 }
