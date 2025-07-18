@@ -98,6 +98,8 @@ func (wsh *WebSocketHandler) startWaitingRoom(roomId string) {
 	ctx, cancel := context.WithTimeout(
 		context.Background(), WaitingRoomDuration*time.Second,
 	)
+
+	log.Println("Time left is set to ", WaitingRoomDuration)
 	
 	waitingRoom := room.NewWaitingRoomState(roomObj, WaitingRoomDuration, ctx, cancel)
 	wsh.WaitingRooms[roomId] = waitingRoom
@@ -105,52 +107,57 @@ func (wsh *WebSocketHandler) startWaitingRoom(roomId string) {
 	log.Println("Started waiting room for roomId: ", roomId)
 }
 
-func (wsh *WebSocketHandler) runWaitingRoom (waitingRoom *room.WaitingRoomState) {
-	ticker := time.NewTicker(32 * time.Millisecond)
-	defer ticker.Stop()
+func (wsh *WebSocketHandler) runWaitingRoom(waitingRoom *room.WaitingRoomState) {
+    ticker := time.NewTicker(1000 * time.Millisecond) // For UI updates
+    defer ticker.Stop()
+    
+    for {
+        select {
+        case <-waitingRoom.Ctx.Done():
+            log.Printf("Waiting room %s timed out", waitingRoom.Room.ID)
+            waitingRoom.Mu.Lock()
+            waitingRoom.IsActive = false
+            waitingRoom.Mu.Unlock()
+            
+            if waitingRoom.CurrentPlayers >= MinPlayersToStart {
+                wsh.startGame(waitingRoom.Room.ID)
+            } else {
+                wsh.closeRoom(waitingRoom.Room.ID, "")
+            }
+            return
+            
+        case <-ticker.C:
+            waitingRoom.Mu.Lock()
+            
+            if !waitingRoom.IsActive {
+                waitingRoom.Mu.Unlock()
+                return
+            }
+            
+            // Calculate remaining time from context deadline
+            deadline, ok := waitingRoom.Ctx.Deadline()
+            if ok {
+                waitingRoom.TimeLeft = int(time.Until(deadline).Seconds())
+            }
+            
+            arePlayersFilled := waitingRoom.CurrentPlayers >= waitingRoom.Room.MaxPlayers
+            areMinimumPlayers := waitingRoom.CurrentPlayers >= MinPlayersToStart
+            
+            if areMinimumPlayers && arePlayersFilled {
+                log.Printf("Room %s has enough players, starting game immediately", waitingRoom.Room.ID)
+                waitingRoom.IsActive = false
+                waitingRoom.Mu.Unlock()
+                wsh.startGame(waitingRoom.Room.ID)
+                return
+            }
+            
+            // Broadcast timer update to clients here
+			wsh.broadcastWaitingRoomMessage(waitingRoom)
 
-	for {
-		select {
-		case <- waitingRoom.Ctx.Done():
-			log.Println("Waiting room %s cancelled", waitingRoom.Room.ID)
-		
-		case <- ticker.C:
-			waitingRoom.Mu.Lock()
-			
-			if !waitingRoom.IsActive {
-				waitingRoom.Mu.Unlock()
-				return
-			}
-
-			waitingRoom.TimeLeft--
-
-			// broadcast the timer for the client
-			
-			if waitingRoom.CurrentPlayers >= MinPlayersToStart && waitingRoom.CurrentPlayers >= waitingRoom.Room.MaxPlayers {
-				log.Println("Room %s has enough players, starting game immediately", waitingRoom.Room.ID)
-				waitingRoom.IsActive = false
-				waitingRoom.Mu.Unlock()
-				wsh.startGame(waitingRoom.Room.ID)
-				return
-			}
-
-			if waitingRoom.TimeLeft <= 0 {
-				log.Println("Waiting time has been ended")
-				waitingRoom.IsActive = false
-				waitingRoom.Mu.Unlock()
-
-				if waitingRoom.CurrentPlayers >= MinPlayersToStart {
-					wsh.startGame(waitingRoom.Room.ID)
-				} else {
-					wsh.closeRoom(waitingRoom.Room.ID, "")
-				}
-
-				return
-			}
-
-		waitingRoom.Mu.Unlock()
-		}
-	}	
+            
+            waitingRoom.Mu.Unlock()
+        }
+    }
 }
 
 func (wsh *WebSocketHandler) broadcastWaitingRoomMessage(waitingRoom *room.WaitingRoomState) {
@@ -181,7 +188,7 @@ func (wsh *WebSocketHandler) broadcastWaitingRoomMessage(waitingRoom *room.Waiti
 		return
 	}
 
-	wsh.broadcastToRoom(waitingRoom.Room.ID, encoded)
+	wsh.broadcastToAll(encoded)
 }
 
 func (wsh *WebSocketHandler) addPlayerToWaitingRoom(roomId string, client *client.Client) bool {
@@ -749,6 +756,10 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			roomId := wsh.RoomManager.CreateRoom(client, int(room_create_req.MaxPlayers))
 			log.Println("Generated Room Id: ", roomId)
 
+			// start waiting room
+			wsh.startWaitingRoom(roomId);
+			client.RoomId = roomId;
+
 			responseMessage := &pb.RoomCreateResponse{
 				RoomId: roomId,
 			}
@@ -767,6 +778,12 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 
 			client.SendQueue <- encoded
+			break
+
+		case pb.MsgType_room_join_request:
+			room_join_req := message.GetRoomJoinRequest()
+			
+			log.Println("Receieved a room join request: %v", room_join_req)
 			break
 
 		case pb.MsgType_init:

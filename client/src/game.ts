@@ -9,20 +9,35 @@ const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
 
 const urlParams = new URLSearchParams(window.location.search);
 const roomId = urlParams.get("roomId");
+const action = urlParams.get("action");
 
 const roomCodeDisplay = document.getElementById("room-code-display") as HTMLDivElement;
 const statusDisplay = document.getElementById("status-display") as HTMLDivElement;
+const playerCountDisplay = document.getElementById("player-count-display") as HTMLDivElement;
 
-if (!roomId) {
+let roomState = {
+    isActive: false,
+    gameStarted: false,
+    currentRoomId: "",
+    currentPlayers: 0, // players in the room -> its same as in the server
+    maxPlayers: 0,
+    timeLeft: 0,
+}
+
+if (!roomId && action !== "create") {
     console.error("No roomId provided in URL");
     roomCodeDisplay.textContent = "Room Code: ERROR";
+    statusDisplay.textContent = "Invalid Room Configuration";
 } else {
     roomCodeDisplay.textContent = `Room Code: ${roomId}`;
+    statusDisplay.textContent = "Connecting...";
 }
 
 // Set canvas dimensions - use available space but with proper aspect ratio
 const gameContainer = document.getElementById("game-container") as HTMLDivElement;
 const canvasContainer = document.querySelector(".canvas-container") as HTMLDivElement;
+
+canvas.style.display = "none";
 
 // Calculate canvas size based on the canvas container, not the full game container
 const containerRect = canvasContainer.getBoundingClientRect();
@@ -62,10 +77,6 @@ let scored: string = '';
 
 let isResetting: boolean = false;
 let resetMessage: string = '';
-
-let startTime: number = 0;
-let timeLeft: number = 0;
-let intervalId: number | undefined;
 
 console.log("Canvas dimensions:", { width: gameWidth, height: gameHeight });
 console.log("Fix that error and print scored: ", scored);
@@ -116,63 +127,31 @@ function drawGame(): void {
 // Initial draw
 drawGame();
 
-function startWaitTimer(): void {
-    statusDisplay.textContent = `Waiting for players: ${timeLeft}s`;
-    drawGame();
-    intervalId = window.setInterval(() => {
-        timeLeft--;
-        statusDisplay.textContent = `Waiting for players: ${timeLeft}s`;
-        drawGame();
-        if (timeLeft <= 0) {
-            clearInterval(intervalId);
-            console.log("Timer expired, starting game or closing room");
-            statusDisplay.textContent = "Starting game or closing room...";
-        }
-    }, 1000);
+function updateWaitingRoomDisplay(
+    currentPlayers: number, 
+    maxPlayers: number, 
+    timeLeft: number
+): void {
+    statusDisplay.textContent = `Waiting for players...(${timeLeft}s remaining)`
+    playerCountDisplay.textContent = `Players: ${currentPlayers} / ${maxPlayers}`
+    
+    // hide canvas during waiting room
+    canvas.style.display = "none";
+
+    gameContainer.style.display = "flex";
+    gameContainer.style.flexDirection = "column";
+    gameContainer.style.alignItems = "center";
+    gameContainer.style.justifyContent = "center";
 }
 
-function startTimer(duration: number, message: string): void {
-    isResetting = true;
-    resetMessage = message;
-    timeLeft = duration;
-    startTime = Date.now();
-
-    // Clear any existing interval
-    if (intervalId) {
-        clearInterval(intervalId);
-    }
-
-    // Set new interval
-    intervalId = window.setInterval(() => {
-        updateTimer();
-    }, 1000);
-}
-
-function stopTimer(): void {
-    if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = undefined;
-    }
-    isResetting = false;
-    resetMessage = '';
-}
-
-function updateTimer(): void {
-    const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
-    timeLeft = Math.max(0, 3 - elapsedSeconds); 
-
-    drawGame();
-
-    if (timeLeft <= 0) {
-        stopTimer();
-    }
-}
-
-// WebSocket event handlers
-socket.onopen = (): void => {
-    console.log("Connected to WebSocket server");
-    statusDisplay.textContent = "Connected";
-
+function startGame(): void {
+    gameState.gameStarted = true;
+    gameState.inWaitingRoom = false;
+    
+    statusDisplay.textContent = "Game Started!";
+    canvas.style.display = "block";
+    
+    // Send init message to server
     const initDataPlain: InitMessage = {
         width: gameWidth,
         height: gameHeight,
@@ -185,56 +164,103 @@ socket.onopen = (): void => {
         init: initDataPlain,
     };
 
-    console.log("Plain init message: ", wrappedMessagePlain);
-
     const encoded: Uint8Array = Message.encode(wrappedMessagePlain).finish();
-    console.log("This is the encoded message from the client", encoded);
-    console.log("Sending InitMessage (object representation):", initDataPlain);
-
     socket.send(encoded);
+    
+    // Start drawing
+    drawGame();
+}
+
+function handleRoomClosed(reason: string): void {
+    statusDisplay.textContent = `Room closed: ${reason}`;
+    canvas.style.display = "none";
+    
+    // Optionally redirect to home page or show retry option
+    setTimeout(() => {
+        window.location.href = "/";
+    }, 3000);
+}
+
+// WebSocket event handlers
+socket.onopen = (): void => {
+    console.log("Connected to WebSocket server");
+    statusDisplay.textContent = "Connected";
+    console.log("this is the action", action)
+
+    // const initDataPlain: InitMessage = {
+    //     width: gameWidth,
+    //     height: gameHeight,
+    //     paddleHeight: paddleHeight,
+    //     paddleWidth: paddleWidth,
+    // };
+    //
+    // const wrappedMessagePlain = {
+    //     type: MsgType.init,
+    //     init: initDataPlain,
+    // };
+    //
+    // const encoded: Uint8Array = Message.encode(wrappedMessagePlain).finish();
+    // socket.send(encoded);
 };
+
+
 
 socket.onmessage = async (event: MessageEvent): void => {
     const arrayBuffer = await event.data.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
     const message = Message.decode(bytes);
+    console.log(message);
 
     switch (message.type) {
+        case MsgType.waiting_room_state:
+            const waitingState = message.waitingRoomState;
+            
+            roomState.isActive = waitingState.isActive;
+            roomState.currentPlayers = waitingState.currentPlayers;
+            roomState.maxPlayers = waitingState.room.maxPlayers;
+            roomState.timeLeft = waitingState.timeLeft;
+
+            updateWaitingRoomDisplay(
+                roomState.currentPlayers,
+                roomState.maxPlayers,
+                roomState.timeLeft
+            );
+
+            console.log("Waiting Room State message recieved");
+
+            break;
+
         case MsgType.initial_game_state:
             const initial = message.initialGameState;
             console.log("Initial game state received", initial);
-            if (timeLeft === 0) {
-                timeLeft = 90;
-                startWaitTimer();
-            }
             leftPaddleY = initial.leftPaddleData ?? leftPaddleY;
             rightPaddleY = initial.rightPaddleData ?? rightPaddleY;
             break;
 
         case MsgType.game_state:
             console.log("Game state update received", message);
-            const gameState = message.gameState;
+            const gameStateMsg = message.gameStateMsg;
 
-            if (gameState.leftPaddleData !== undefined) {
-                console.log("Message about the left paddle data: ", gameState.leftPaddleData);
-                if (gameState.clients !== undefined && gameState.clients < 2) {
+            if (gameStateMsg.leftPaddleData !== undefined) {
+                console.log("Message about the left paddle data: ", gameStateMsg.leftPaddleData);
+                if (gameStateMsg.clients !== undefined && gameStateMsg.clients < 2) {
                     leftPaddleY = Math.max(
                         0,
-                        Math.min(leftPaddleY + gameState.leftPaddleData, gameHeight - paddleHeight)
+                        Math.min(leftPaddleY + gameStateMsg.leftPaddleData, gameHeight - paddleHeight)
                     );
                 } else {
-                    leftPaddleY = gameState.leftPaddleData;
+                    leftPaddleY = gameStateMsg.leftPaddleData;
                 }
             }
 
-            if (gameState.rightPaddleData !== undefined) {
-                if (gameState.clients !== undefined && gameState.clients < 2) {
+            if (gameStateMsg.rightPaddleData !== undefined) {
+                if (gameStateMsg.clients !== undefined && gameStateMsg.clients < 2) {
                     rightPaddleY = Math.max(
                         0,
-                        Math.min(rightPaddleY + gameState.rightPaddleData, gameHeight - paddleHeight)
+                        Math.min(rightPaddleY + gameStateMsg.rightPaddleData, gameHeight - paddleHeight)
                     );
                 } else {
-                    rightPaddleY = gameState.rightPaddleData;
+                    rightPaddleY = gameStateMsg.rightPaddleData;
                 }
             }
             break;

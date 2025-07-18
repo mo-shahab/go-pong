@@ -51,7 +51,7 @@ function handleMessage (message: Message){
                 statusDisplay.textContent = "Room Created Succesfully";
 
                 setTimeout(() => {
-                    window.location.href = `game.html?roomId=${encodeURIComponent(response.roomId)}`;
+                    window.location.href = `game.html?roomId=${encodeURIComponent(response.roomId)}&action=create`;
                 }, 1000)
             } else {
                 statusDisplay.textContent = "Failed To Create Room";
