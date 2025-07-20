@@ -117,9 +117,20 @@ func (rm *RoomManager) RemoveClient(roomId string, clientId string) {
 	room.Mu.Lock()
 	defer room.Mu.Unlock()
 
+	client, exists := room.Clients[clientId]
+	if !exists {
+		return
+	}
+	
+	isHost := client.Conn == room.Host
+
+	if isHost {
+		log.Println("The host of the thing is being executed this for some reason ")
+	}
+
 	delete(room.Clients, clientId)
 
-	if room.MaxPlayers == 0 || room.Clients[clientId].Conn == room.Host {
+	if room.MaxPlayers == 0 || isHost {
 
 		for _, client := range room.Clients {
 			// write the protobuf message saying that the room is closed (broadcast it basically)

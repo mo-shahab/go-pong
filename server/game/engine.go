@@ -1,4 +1,5 @@
 // game/engine.go
+
 package game
 
 import (
@@ -10,109 +11,101 @@ import (
 
 	"github.com/mo-shahab/go-pong/ball"
 	"github.com/mo-shahab/go-pong/canvas"
-	"github.com/mo-shahab/go-pong/client"
 	"github.com/mo-shahab/go-pong/paddle"
-	pb "github.com/mo-shahab/go-pong/proto"
 	"github.com/mo-shahab/go-pong/scores"
-	"google.golang.org/protobuf/proto"
+	pb "github.com/mo-shahab/go-pong/proto"
 )
 
-// GameState holds the current state of a game session
+// Constants
+const (
+	InitialBallDx = 20
+	InitialBallDy = 0
+	BallRadius    = 8
+	MaxSpeed      = 10.0
+	Acceleration  = 2.0
+	Friction      = 0.9
+)
+
+// GameState represents the current state of a game
 type GameState struct {
 	Ball             ball.Ball
 	Canvas           canvas.Canvas
 	Paddle           paddle.Paddle
+	LeftPaddleData   PaddleData
+	RightPaddleData  PaddleData
 	Scores           scores.Scores
-	LeftPaddlePos    float64
-	RightPaddlePos   float64
 	BallRunning      bool
 	BallVisible      bool
 	Initialized      bool
-	mu               sync.RWMutex
+	Running          bool
+	Mu               sync.RWMutex
+	paddlePositions  PaddlePositions
+	ballUpdateTicker *time.Ticker
+	stopBallUpdates  chan bool
 }
 
-// PaddleManager handles paddle movement and collision logic
-type PaddleManager struct {
-	leftPaddleData  paddleData
-	rightPaddleData paddleData
-	gameState       *GameState
-	mu              sync.RWMutex
+// GameEventHandler defines the interface for handling game events
+type GameEventHandler interface {
+	OnBallPositionUpdate(ball *pb.Ball)
+	OnScoreUpdate(leftScore, rightScore int32, whoScored string)
+	OnGameStateUpdate(leftPaddle, rightPaddle float64)
 }
 
-// BallManager handles ball physics and collision detection
-type BallManager struct {
-	gameState     *GameState
-	paddleManager *PaddleManager
-	mu            sync.RWMutex
+// Engine represents the game engine
+type Engine struct {
+	games   map[string]*GameState
+	mu      sync.RWMutex
+	handler GameEventHandler
 }
 
-// GameEngine coordinates all game subsystems
-type GameEngine struct {
-	gameState     *GameState
-	paddleManager *PaddleManager
-	ballManager   *BallManager
-	broadcaster   MessageBroadcaster
-	ticker        *time.Ticker
-	stopChan      chan struct{}
-	mu            sync.RWMutex
-}
-
-// MessageBroadcaster interface for sending messages to clients
-type MessageBroadcaster interface {
-	BroadcastToAll(message []byte)
-	BroadcastToRoom(roomId string, message []byte)
-}
-
-// paddleData represents paddle state for a team
-type paddleData struct {
-	movementSum float64
-	velocity    float64
-	players     int
-	position    float64
-}
-
-// Game constants
-const (
-	// Ball constants
-	InitialBallDx = 20
-	InitialBallDy = 0
-	BallRadius    = 8
-	
-	// Paddle constants
-	MaxSpeed     = 10.0
-	Acceleration = 2.0
-	Friction     = 0.9
-	
-	// Game loop
-	TickRate = 32 * time.Millisecond
-)
-
-// NewGameEngine creates a new game engine instance
-func NewGameEngine(broadcaster MessageBroadcaster) *GameEngine {
-	gameState := &GameState{}
-	paddleManager := &PaddleManager{
-		gameState: gameState,
-	}
-	ballManager := &BallManager{
-		gameState:     gameState,
-		paddleManager: paddleManager,
-	}
-	
-	return &GameEngine{
-		gameState:     gameState,
-		paddleManager: paddleManager,
-		ballManager:   ballManager,
-		broadcaster:   broadcaster,
-		stopChan:      make(chan struct{}),
+// NewEngine creates a new game engine
+func NewEngine(handler GameEventHandler) *Engine {
+	return &Engine{
+		games:   make(map[string]*GameState),
+		handler: handler,
 	}
 }
 
-// Initialize sets up the game with initial parameters
-func (ge *GameEngine) Initialize(width, height, paddleWidth, paddleHeight float64) {
-	ge.gameState.mu.Lock()
-	defer ge.gameState.mu.Unlock()
+// CreateGame creates a new game instance
+func (e *Engine) CreateGame(gameID string) *GameState {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	game := &GameState{
+		paddlePositions: PaddlePositions{},
+		stopBallUpdates: make(chan bool, 1),
+	}
+
+	e.games[gameID] = game
+	return game
+}
+
+// GetGame retrieves a game by ID
+func (e *Engine) GetGame(gameID string) (*GameState, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	
-	ge.gameState.Ball = ball.Ball{
+	game, exists := e.games[gameID]
+	return game, exists
+}
+
+// RemoveGame removes a game from the engine
+func (e *Engine) RemoveGame(gameID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if game, exists := e.games[gameID]; exists {
+		game.StopBallUpdates()
+		delete(e.games, gameID)
+	}
+}
+
+// InitializeGame initializes the game with canvas and paddle dimensions
+func (gs *GameState) Initialize(width, height, paddleWidth, paddleHeight float64) {
+	gs.Mu.Lock()
+	defer gs.Mu.Unlock()
+
+	gs.Ball = ball.Ball{
 		X:       width / 2,
 		Y:       height / 2,
 		Dx:      -10,
@@ -120,354 +113,282 @@ func (ge *GameEngine) Initialize(width, height, paddleWidth, paddleHeight float6
 		Radius:  BallRadius,
 		Visible: true,
 	}
-	
-	ge.gameState.Canvas = canvas.Canvas{
+
+	gs.Canvas = canvas.Canvas{
 		Width:  width,
 		Height: height,
 	}
-	
-	ge.gameState.Paddle = paddle.Paddle{
+
+	gs.Paddle = paddle.Paddle{
 		Width:  paddleWidth,
 		Height: paddleHeight,
 	}
-	
+
 	// Initialize paddle positions to center
 	centerY := (height / 2) - (paddleHeight / 2)
-	ge.gameState.LeftPaddlePos = centerY
-	ge.gameState.RightPaddlePos = centerY
-	
-	ge.paddleManager.leftPaddleData.position = centerY
-	ge.paddleManager.rightPaddleData.position = centerY
-	
-	ge.gameState.Initialized = true
-	
-	log.Println("Game engine initialized")
+	gs.LeftPaddleData.Position = centerY
+	gs.RightPaddleData.Position = centerY
+	gs.paddlePositions.LeftPaddle = centerY
+	gs.paddlePositions.RightPaddle = centerY
+
+	gs.Initialized = true
 }
 
-// Start begins the game loop
-func (ge *GameEngine) Start() {
-	ge.mu.Lock()
-	if ge.ticker != nil {
-		ge.mu.Unlock()
-		return // Already running
+// StartBallUpdates begins the ball update loop
+func (gs *GameState) StartBallUpdates(engine *Engine, gameID string) {
+	gs.Mu.Lock()
+	if gs.BallRunning {
+		gs.Mu.Unlock()
+		return
 	}
-	
-	ge.ticker = time.NewTicker(TickRate)
-	ge.gameState.BallRunning = true
-	ge.mu.Unlock()
-	
-	log.Println("Starting game engine")
-	go ge.gameLoop()
+	gs.BallRunning = true
+	gs.ballUpdateTicker = time.NewTicker(32 * time.Millisecond)
+	gs.Mu.Unlock()
+
+	go func() {
+		defer gs.ballUpdateTicker.Stop()
+
+		for {
+			select {
+			case <-gs.ballUpdateTicker.C:
+				gs.updateBallPosition(engine, gameID)
+			case <-gs.stopBallUpdates:
+				return
+			}
+		}
+	}()
 }
 
-// Stop halts the game loop
-func (ge *GameEngine) Stop() {
-	ge.mu.Lock()
-	defer ge.mu.Unlock()
-	
-	if ge.ticker != nil {
-		ge.ticker.Stop()
-		ge.ticker = nil
-		close(ge.stopChan)
-		ge.stopChan = make(chan struct{})
-		ge.gameState.BallRunning = false
-		log.Println("Game engine stopped")
-	}
-}
+// StopBallUpdates stops the ball update loop
+func (gs *GameState) StopBallUpdates() {
+	gs.Mu.Lock()
+	defer gs.Mu.Unlock()
 
-// gameLoop runs the main game update cycle
-func (ge *GameEngine) gameLoop() {
-	for {
+	if gs.BallRunning {
+		gs.BallRunning = false
+		if gs.ballUpdateTicker != nil {
+			gs.ballUpdateTicker.Stop()
+		}
 		select {
-		case <-ge.stopChan:
-			return
-		case <-ge.ticker.C:
-			ge.update()
+		case gs.stopBallUpdates <- true:
+		default:
 		}
 	}
 }
 
-// update handles one game loop iteration
-func (ge *GameEngine) update() {
-	ge.ballManager.updateBall()
-	ge.broadcastGameState()
-}
+// MovePaddle handles paddle movement for a team
+func (gs *GameState) MovePaddle(team string, direction string) (float64, float64) {
+	gs.Mu.Lock()
+	defer gs.Mu.Unlock()
 
-// MovePaddle handles paddle movement for a specific team
-func (ge *GameEngine) MovePaddle(team, direction string) {
-	ge.paddleManager.updatePaddlePosition(team, direction)
-}
-
-// GetGameState returns the current game state safely
-func (ge *GameEngine) GetGameState() GameStateSnapshot {
-	ge.gameState.mu.RLock()
-	defer ge.gameState.mu.RUnlock()
-	
-	return GameStateSnapshot{
-		Ball:           ge.gameState.Ball,
-		LeftPaddlePos:  ge.gameState.LeftPaddlePos,
-		RightPaddlePos: ge.gameState.RightPaddlePos,
-		Scores:         ge.gameState.Scores,
-		BallRunning:    ge.gameState.BallRunning,
-		BallVisible:    ge.gameState.BallVisible,
-		Initialized:    ge.gameState.Initialized,
-	}
-}
-
-// GameStateSnapshot represents a point-in-time snapshot of game state
-type GameStateSnapshot struct {
-	Ball           ball.Ball
-	LeftPaddlePos  float64
-	RightPaddlePos float64
-	Scores         scores.Scores
-	BallRunning    bool
-	BallVisible    bool
-	Initialized    bool
-}
-
-// broadcastGameState sends current game state to all clients
-func (ge *GameEngine) broadcastGameState() {
-	snapshot := ge.GetGameState()
-	
-	ballObject := &pb.Ball{
-		X:      snapshot.Ball.X,
-		Y:      snapshot.Ball.Y,
-		Radius: snapshot.Ball.Radius,
-	}
-	
-	ballPositionMessage := &pb.BallPositionMessage{
-		Ball: ballObject,
-	}
-	
-	wrappedMessage := &pb.Message{
-		Type: pb.MsgType_ball_position,
-		MessageType: &pb.Message_BallPosition{
-			BallPosition: ballPositionMessage,
-		},
-	}
-	
-	message, err := proto.Marshal(wrappedMessage)
-	if err != nil {
-		log.Printf("Failed to encode ball message: %v", err)
-		return
-	}
-	
-	ge.broadcaster.BroadcastToAll(message)
-}
-
-// UpdatePaddlePosition updates paddle position based on player input
-func (pm *PaddleManager) updatePaddlePosition(team, direction string) {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-	
-	var paddle *paddleData
-	var globalPosition *float64
-	
-	pm.gameState.mu.Lock()
-	defer pm.gameState.mu.Unlock()
-	
-	if team == "left" {
-		paddle = &pm.leftPaddleData
-		globalPosition = &pm.gameState.LeftPaddlePos
-	} else {
-		paddle = &pm.rightPaddleData
-		globalPosition = &pm.gameState.RightPaddlePos
-	}
-	
-	// Update velocity based on direction
+	var movement float64
 	switch direction {
 	case "up":
-		paddle.velocity -= Acceleration
+		movement = -30
 	case "down":
-		paddle.velocity += Acceleration
+		movement = 30
 	default:
-		paddle.velocity *= Friction
+		return gs.paddlePositions.LeftPaddle, gs.paddlePositions.RightPaddle
 	}
-	
-	// Clamp velocity
-	if paddle.velocity > MaxSpeed {
-		paddle.velocity = MaxSpeed
-	} else if paddle.velocity < -MaxSpeed {
-		paddle.velocity = -MaxSpeed
-	}
-	
-	// Calculate new position
-	newPosition := *globalPosition + paddle.velocity
-	
-	// Boundary checking
-	if newPosition < 0 {
-		newPosition = 0
-		paddle.velocity = 0
-	} else if newPosition+pm.gameState.Paddle.Height > pm.gameState.Canvas.Height {
-		newPosition = pm.gameState.Canvas.Height - pm.gameState.Paddle.Height
-		paddle.velocity = 0
-	}
-	
-	// Update global position (source of truth)
-	*globalPosition = newPosition
-	
-	// Update paddle data for averaging if multiple players
-	paddle.movementSum += paddle.velocity
-	if paddle.players > 0 {
-		paddle.position = paddle.movementSum / float64(paddle.players)
-		paddle.movementSum = 0
-	} else {
-		paddle.position = 0
-		paddle.movementSum = 0
-	}
-}
 
-// AddPlayerToPaddle adds a player to a paddle team
-func (pm *PaddleManager) AddPlayerToPaddle(team string) {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-	
 	if team == "left" {
-		pm.leftPaddleData.players++
+		newPos := gs.paddlePositions.LeftPaddle + movement
+		if newPos >= 0 && newPos+gs.Paddle.Height <= gs.Canvas.Height {
+			gs.paddlePositions.LeftPaddle = newPos
+		}
+
+		gs.LeftPaddleData.MovementSum += movement
+		if gs.LeftPaddleData.Players > 0 {
+			gs.LeftPaddleData.Position = gs.LeftPaddleData.MovementSum / float64(gs.LeftPaddleData.Players)
+			gs.LeftPaddleData.MovementSum = 0
+		}
 	} else {
-		pm.rightPaddleData.players++
+		newPos := gs.paddlePositions.RightPaddle + movement
+		if newPos >= 0 && newPos+gs.Paddle.Height <= gs.Canvas.Height {
+			gs.paddlePositions.RightPaddle = newPos
+		}
+
+		gs.RightPaddleData.MovementSum += movement
+		if gs.RightPaddleData.Players > 0 {
+			gs.RightPaddleData.Position = gs.RightPaddleData.MovementSum / float64(gs.RightPaddleData.Players)
+			gs.RightPaddleData.MovementSum = 0
+		}
+	}
+
+	return gs.paddlePositions.LeftPaddle, gs.paddlePositions.RightPaddle
+}
+
+// AddPlayer adds a player to a team
+func (gs *GameState) AddPlayer(team string) {
+	gs.Mu.Lock()
+	defer gs.Mu.Unlock()
+
+	if team == "left" {
+		gs.LeftPaddleData.Players++
+	} else {
+		gs.RightPaddleData.Players++
 	}
 }
 
-// RemovePlayerFromPaddle removes a player from a paddle team
-func (pm *PaddleManager) RemovePlayerFromPaddle(team string) {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-	
-	if team == "left" && pm.leftPaddleData.players > 0 {
-		pm.leftPaddleData.players--
-	} else if team == "right" && pm.rightPaddleData.players > 0 {
-		pm.rightPaddleData.players--
+// RemovePlayer removes a player from a team
+func (gs *GameState) RemovePlayer(team string) {
+	gs.Mu.Lock()
+	defer gs.Mu.Unlock()
+
+	if team == "left" && gs.LeftPaddleData.Players > 0 {
+		gs.LeftPaddleData.Players--
+	} else if team == "right" && gs.RightPaddleData.Players > 0 {
+		gs.RightPaddleData.Players--
 	}
 }
 
-// updateBall handles ball physics and collision detection
-func (bm *BallManager) updateBall() {
-	bm.mu.Lock()
-	defer bm.mu.Unlock()
-	
-	bm.gameState.mu.Lock()
-	defer bm.gameState.mu.Unlock()
-	
+// GetGameState returns the current game state for client updates
+func (gs *GameState) GetGameState() (leftPaddle, rightPaddle float64, leftScore, rightScore int32) {
+	gs.Mu.RLock()
+	defer gs.Mu.RUnlock()
+
+	return gs.paddlePositions.LeftPaddle, gs.paddlePositions.RightPaddle, gs.Scores.LeftScores, gs.Scores.RightScores
+}
+
+// GetBallState returns the current ball state
+func (gs *GameState) GetBallState() ball.Ball {
+	gs.Mu.RLock()
+	defer gs.Mu.RUnlock()
+
+	return gs.Ball
+}
+
+// updateBallPosition updates the ball position and handles collisions
+func (gs *GameState) updateBallPosition(engine *Engine, gameID string) {
+	gs.Mu.Lock()
+
 	// Update ball position
-	bm.gameState.Ball.X += bm.gameState.Ball.Dx
-	bm.gameState.Ball.Y += bm.gameState.Ball.Dy
-	
+	gs.Ball.X += gs.Ball.Dx
+	gs.Ball.Y += gs.Ball.Dy
+
+	ballRadius := gs.Ball.Radius
+	maxHeight := gs.Canvas.Height
+
 	// Wall collision (top & bottom)
-	ballRadius := bm.gameState.Ball.Radius
-	maxHeight := bm.gameState.Canvas.Height
-	
-	if bm.gameState.Ball.Y-ballRadius <= 0 || bm.gameState.Ball.Y+ballRadius >= maxHeight {
-		bm.gameState.Ball.Dy *= -1
+	if gs.Ball.Y-ballRadius <= 0 || gs.Ball.Y+ballRadius >= maxHeight {
+		gs.Ball.Dy *= -1
 	}
-	
-	// Paddle collision
-	bm.handlePaddleCollision()
-	
+
+	// Paddle collision logic
+	gs.handlePaddleCollision()
+
+	// Create ball update for broadcasting
+	ballUpdate := &pb.Ball{
+		X:      gs.Ball.X,
+		Y:      gs.Ball.Y,
+		Radius: gs.Ball.Radius,
+	}
+
+	gs.Mu.Unlock()
+
+	// Notify handler about ball position update
+	if engine.handler != nil {
+		engine.handler.OnBallPositionUpdate(ballUpdate)
+	}
+
 	// Check for scoring
-	bm.checkBallOutOfBounds()
+	gs.checkBallOutOfBounds(engine, gameID)
 }
 
-// handlePaddleCollision detects and handles ball-paddle collisions
-func (bm *BallManager) handlePaddleCollision() {
-	ballRadius := bm.gameState.Ball.Radius
-	
-	// Left paddle collision
-	leftPaddleRight := bm.gameState.Paddle.Width
-	leftPaddleTop := bm.gameState.LeftPaddlePos
-	leftPaddleBottom := leftPaddleTop + bm.gameState.Paddle.Height
-	
-	// Right paddle collision
-	rightPaddleLeft := bm.gameState.Canvas.Width - bm.gameState.Paddle.Width
-	rightPaddleTop := bm.gameState.RightPaddlePos
-	rightPaddleBottom := rightPaddleTop + bm.gameState.Paddle.Height
-	
-	ballSpeed := math.Hypot(bm.gameState.Ball.Dx, bm.gameState.Ball.Dy)
-	maxBounceAngle := math.Pi / 3 // 60 degrees max
-	
-	// Left paddle collision
-	if bm.gameState.Ball.X-ballRadius <= leftPaddleRight &&
-		bm.gameState.Ball.Y >= leftPaddleTop &&
-		bm.gameState.Ball.Y <= leftPaddleBottom &&
-		bm.gameState.Ball.Dx < 0 {
-		
-		relativePosition := (bm.gameState.Ball.Y - (leftPaddleTop + bm.gameState.Paddle.Height/2)) / (bm.gameState.Paddle.Height / 2)
-		bounceAngle := relativePosition * maxBounceAngle
-		
-		bm.gameState.Ball.Dx = math.Abs(ballSpeed * math.Cos(bounceAngle))
-		bm.gameState.Ball.Dy = ballSpeed * math.Sin(bounceAngle)
-		bm.gameState.Ball.Dy += bm.randomVariation()
-		bm.gameState.Ball.X = leftPaddleRight + ballRadius
-	}
-	
-	// Right paddle collision
-	if bm.gameState.Ball.X+ballRadius >= rightPaddleLeft &&
-		bm.gameState.Ball.Y >= rightPaddleTop &&
-		bm.gameState.Ball.Y <= rightPaddleBottom &&
-		bm.gameState.Ball.Dx > 0 {
-		
-		relativePosition := (bm.gameState.Ball.Y - (rightPaddleTop + bm.gameState.Paddle.Height/2)) / (bm.gameState.Paddle.Height / 2)
-		bounceAngle := relativePosition * maxBounceAngle
-		
-		bm.gameState.Ball.Dx = -math.Abs(ballSpeed * math.Cos(bounceAngle))
-		bm.gameState.Ball.Dy = ballSpeed * math.Sin(bounceAngle)
-		bm.gameState.Ball.Dy += bm.randomVariation()
-		bm.gameState.Ball.X = rightPaddleLeft - ballRadius
-	}
+// resetBall resets the ball to center position
+func (gs *GameState) resetBall(directionX int) {
+	gs.Ball.X = gs.Canvas.Width / 2
+	gs.Ball.Y = gs.Canvas.Height / 2
+
+	baseSpeed := 10
+	gs.Ball.Dx = float64(directionX) * float64(baseSpeed)
+	gs.Ball.Dy = (rand.Float64() - 0.5) * 5.0
 }
 
-// checkBallOutOfBounds handles scoring when ball goes out of bounds
-func (bm *BallManager) checkBallOutOfBounds() {
-	ballRadius := bm.gameState.Ball.Radius
+// checkBallOutOfBounds checks if ball is out of bounds and handles scoring
+func (gs *GameState) checkBallOutOfBounds(engine *Engine, gameID string) {
+	gs.Mu.Lock()
+
+	ballRadius := gs.Ball.Radius
 	scored := false
 	whoScored := ""
-	
-	// Ball hit left wall - right player scores
-	if bm.gameState.Ball.X-ballRadius <= 0 {
-		bm.gameState.Scores.RightScores++
-		bm.resetBall(1)
+
+	// Ball colliding with left wall (right player scores)
+	if gs.Ball.X-ballRadius <= 0 {
+		gs.Scores.RightScores++
+		log.Printf("Right Player Scored! Score: %d - %d", gs.Scores.RightScores, gs.Scores.LeftScores)
+		gs.resetBall(1)
 		scored = true
 		whoScored = "Right"
-		log.Printf("Right Player Scored! Score: %d-%d", 
-			bm.gameState.Scores.RightScores, bm.gameState.Scores.LeftScores)
 	}
-	
-	// Ball hit right wall - left player scores
-	if bm.gameState.Ball.X+ballRadius >= bm.gameState.Canvas.Width {
-		bm.gameState.Scores.LeftScores++
-		bm.resetBall(-1)
+
+	// Ball colliding with right wall (left player scores)
+	if gs.Ball.X+ballRadius >= gs.Canvas.Width {
+		gs.Scores.LeftScores++
+		log.Printf("Left Player Scored! Score: %d - %d", gs.Scores.LeftScores, gs.Scores.RightScores)
+		gs.resetBall(-1)
 		scored = true
 		whoScored = "Left"
-		log.Printf("Left Player Scored! Score: %d-%d", 
-			bm.gameState.Scores.RightScores, bm.gameState.Scores.LeftScores)
 	}
-	
-	if scored {
-		bm.broadcastScore(whoScored)
-		// Add small delay after scoring
-		time.Sleep(100 * time.Millisecond)
+
+	leftScore := gs.Scores.LeftScores
+	rightScore := gs.Scores.RightScores
+
+	gs.Mu.Unlock()
+
+	// Notify handler about score update
+	if scored && engine.handler != nil {
+		// Add a small delay for score display
+		go func() {
+			time.Sleep(3 * time.Second)
+			engine.handler.OnScoreUpdate(leftScore, rightScore, whoScored)
+		}()
 	}
 }
 
-// resetBall resets ball to center with specified direction
-func (bm *BallManager) resetBall(directionX int) {
-	bm.gameState.Ball.X = bm.gameState.Canvas.Width / 2
-	bm.gameState.Ball.Y = bm.gameState.Canvas.Height / 2
-	
-	baseSpeed := 10.0
-	bm.gameState.Ball.Dx = float64(directionX) * baseSpeed
-	bm.gameState.Ball.Dy = (rand.Float64() - 0.5) * 5.0
+// handlePaddleCollision handles ball collision with paddles
+func (gs *GameState) handlePaddleCollision() {
+	ballRadius := gs.Ball.Radius
+
+	leftPaddleRight := gs.Paddle.Width
+	leftPaddleTop := gs.paddlePositions.LeftPaddle
+	leftPaddleBottom := leftPaddleTop + gs.Paddle.Height
+
+	rightPaddleLeft := gs.Canvas.Width - gs.Paddle.Width
+	rightPaddleTop := gs.paddlePositions.RightPaddle
+	rightPaddleBottom := rightPaddleTop + gs.Paddle.Height
+
+	ballSpeed := math.Hypot(gs.Ball.Dx, gs.Ball.Dy)
+	maxBounceAngle := math.Pi / 3 // 60 degrees max
+
+	// Left paddle collision
+	if gs.Ball.X-ballRadius <= leftPaddleRight &&
+		gs.Ball.Y >= leftPaddleTop &&
+		gs.Ball.Y <= leftPaddleBottom {
+
+		relativePosition := (gs.Ball.Y - (leftPaddleTop + gs.Paddle.Height/2)) / (gs.Paddle.Height / 2)
+		bounceAngle := relativePosition * maxBounceAngle
+		gs.Ball.Dx = math.Abs(ballSpeed * math.Cos(bounceAngle))
+		gs.Ball.Dy = ballSpeed * math.Sin(bounceAngle)
+		gs.Ball.Dy += randomVariation()
+		gs.Ball.X = leftPaddleRight + ballRadius
+	}
+
+	// Right paddle collision
+	if gs.Ball.X+ballRadius >= rightPaddleLeft &&
+		gs.Ball.Y >= rightPaddleTop &&
+		gs.Ball.Y <= rightPaddleBottom {
+
+		relativePosition := (gs.Ball.Y - (rightPaddleTop + gs.Paddle.Height/2)) / (gs.Paddle.Height / 2)
+		bounceAngle := relativePosition * maxBounceAngle
+		gs.Ball.Dx = -math.Abs(ballSpeed * math.Cos(bounceAngle))
+		gs.Ball.Dy = ballSpeed * math.Sin(bounceAngle)
+		gs.Ball.Dy += randomVariation()
+		gs.Ball.X = rightPaddleLeft - ballRadius
+	}
 }
 
-// broadcastScore sends score update to all clients
-func (bm *BallManager) broadcastScore(whoScored string) {
-	// This would need to be implemented with access to the broadcaster
-	// For now, just log - you'll need to pass broadcaster to BallManager
-	log.Printf("Score update: Left %d - Right %d", 
-		bm.gameState.Scores.LeftScores, bm.gameState.Scores.RightScores)
-}
-
-// randomVariation adds some randomness to ball movement
-func (bm *BallManager) randomVariation() float64 {
+// randomVariation adds random variation to ball movement
+func randomVariation() float64 {
 	return (rand.Float64() - 0.5) * 2
 }

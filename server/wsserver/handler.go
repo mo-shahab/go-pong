@@ -1,57 +1,92 @@
+// wsserver/handler.go
+
 package wsserver
 
 import (
 	"log"
-	"math"
 	"math/rand"
 	"net/http"
 	"time"
 	"github.com/gorilla/websocket"
-	"github.com/mo-shahab/go-pong/ball"
 	"github.com/mo-shahab/go-pong/client"
+	"github.com/mo-shahab/go-pong/game"
 	pb "github.com/mo-shahab/go-pong/proto"
 	"github.com/mo-shahab/go-pong/room"
 	"google.golang.org/protobuf/proto"
 )
 
-// ball constants
-const (
-	initialBallDx = 20
-	initialBallDy = 0
-	ballRadius    = 8
-)
-
-// paddle constants
-const (
-	maxSpeed     = 10.0
-	acceleration = 2.0
-	friction     = 0.9
-)
-
 // waiting room constants
 const (
-	MinPlayersToStart = 2
+	MinPlayersToStart   = 2
 	WaitingRoomDuration = 90
 )
 
-var globalPaddlePositions = &paddlePositions{}
-
+// NewWebSocketHandler creates a new WebSocket handler
 func NewWebSocketHandler() *WebSocketHandler {
-	return &WebSocketHandler{
-		Upgrader:    websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
-		Connections: make(map[string]*client.Client),
-		ConnToId:    make(map[*websocket.Conn]string),
-		RoomManager: room.NewRoomManager(),
+	handler := &WebSocketHandler{
+		Upgrader:     websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
+		Connections:  make(map[string]*client.Client),
+		ConnToId:     make(map[*websocket.Conn]string),
+		RoomManager:  room.NewRoomManager(),
 		WaitingRooms: make(map[string]*room.WaitingRoomState),
 	}
+	
+	// Create game engine with this handler as the event handler
+	handler.GameEngine = game.NewEngine(handler)
+	
+	return handler
 }
 
-// --------------------------------------------------
-// Waiting Room Functions
+// GameEventHandler interface implementation
+func (wsh *WebSocketHandler) OnBallPositionUpdate(ball *pb.Ball) {
+	ballPositionMessage := &pb.BallPositionMessage{
+		Ball: ball,
+	}
 
-//---------------------------------------------------
+	wrappedMessage := &pb.Message{
+		Type: pb.MsgType_ball_position,
+		MessageType: &pb.Message_BallPosition{
+			BallPosition: ballPositionMessage,
+		},
+	}
 
-// ---------------------------------------------------
+	message, err := proto.Marshal(wrappedMessage)
+	if err != nil {
+		log.Printf("Failed to encode ball position message: %v", err)
+		return
+	}
+
+	wsh.broadcastToAll(message)
+}
+
+func (wsh *WebSocketHandler) OnScoreUpdate(leftScore, rightScore int32, whoScored string) {
+	scoreUpdate := &pb.ScoreMessage{
+		LeftScore:  leftScore,
+		RightScore: rightScore,
+		Scored:     whoScored,
+	}
+
+	wrappedMessage := &pb.Message{
+		Type: pb.MsgType_score,
+		MessageType: &pb.Message_Score{
+			Score: scoreUpdate,
+		},
+	}
+
+	encoded, err := proto.Marshal(wrappedMessage)
+	if err != nil {
+		log.Printf("Failed to marshal score message: %v", err)
+		return
+	}
+
+	wsh.broadcastToAll(encoded)
+}
+
+func (wsh *WebSocketHandler) OnGameStateUpdate(leftPaddle, rightPaddle float64) {
+	// This method can be used for additional game state updates if needed
+	// Currently, paddle updates are handled in the movement message response
+}
+
 // Broadcast functions
 func (wsh *WebSocketHandler) broadcastToAll(message []byte) {
 	wsh.Mu.Lock()
@@ -60,9 +95,8 @@ func (wsh *WebSocketHandler) broadcastToAll(message []byte) {
 	for _, client := range wsh.Connections {
 		select {
 		case client.SendQueue <- message:
-			// log.Println("Message sent to client:", conn.RemoteAddr())
 		default:
-			log.Println("Dropping message, send queue full for client")
+			log.Printf("Dropping message, send queue full for client %s", client.ID)
 		}
 	}
 }
@@ -82,283 +116,15 @@ func (wsh *WebSocketHandler) broadcastToRoom(roomId string, message []byte) {
 	}
 }
 
-// ---------------------------------------------------
-
-// ---------------------------------------------------
-// Ball Logic functions
-func (wsh *WebSocketHandler) startBallUpdates() {
-
-	ticker := time.NewTicker(32 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		<-ticker.C
-
-		wsh.Mu.Lock()
-		if len(wsh.Connections) == 0 {
-			wsh.Mu.Unlock()
-			continue
-		}
-		wsh.Mu.Unlock()
-
-		wsh.updateBallPosition()
-
-		wsh.Mu.Lock()
-
-		ballObject := &pb.Ball{
-			X:      wsh.BallVar.X,
-			Y:      wsh.BallVar.Y,
-			Radius: wsh.BallVar.Radius,
-		}
-
-		ballPositionMessage := &pb.BallPositionMessage{
-			Ball: ballObject,
-		}
-
-		wrappedMessage := &pb.Message{
-			Type: pb.MsgType_ball_position,
-			MessageType: &pb.Message_BallPosition{
-				BallPosition: ballPositionMessage,
-			},
-		}
-
-		message, err := proto.Marshal(wrappedMessage)
-
-		if err != nil {
-			log.Fatalln("Failed to encode the ball message: ", err)
-			wsh.Mu.Unlock()
-			continue
-		}
-
-		wsh.Mu.Unlock()
-
-		wsh.broadcastToAll(message)
+// getGameIdForClient returns the game ID for a client (uses room ID as game ID)
+func (wsh *WebSocketHandler) getGameIdForClient(client *client.Client) string {
+	if client.RoomId != "" {
+		return client.RoomId // Room ID is the game ID
 	}
+	return "lobby" // Default lobby game for clients not in rooms
 }
 
-func (wsh *WebSocketHandler) resetBall(directionX int) {
-	wsh.BallVar.X = wsh.CanvasVar.Width / 2
-	wsh.BallVar.Y = wsh.CanvasVar.Height / 2
-
-	baseSpeed := 10
-	wsh.BallVar.Dx = float64(directionX) * float64(baseSpeed)
-	wsh.BallVar.Dy = (rand.Float64() - 0.5) * 5.0
-}
-
-// checks if the ball is out bounds, which would mean if the player has scored
-// or not
-
-func (wsh *WebSocketHandler) checkBallOutOfBounds() {
-	timer := time.NewTimer(3 * time.Second)
-	defer timer.Stop()
-
-	wsh.Mu.Lock()
-
-	ballRadius := wsh.BallVar.Radius
-	scored := false
-	scoreMessage := &pb.Message{}
-
-	whoScored := ""
-
-	// ball colliding with the left wall
-	if wsh.BallVar.X-ballRadius <= 0 {
-		// Right players score
-		wsh.Scores.RightScores++
-		log.Println("Right Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
-		wsh.resetBall(1)
-		scored = true
-		whoScored = "Right"
-	}
-
-	// ball colliding with the left wall
-	if wsh.BallVar.X+ballRadius >= wsh.CanvasVar.Width {
-		// Left players score
-		wsh.Scores.LeftScores++
-		log.Println("Left Player Scored! Score:  ", wsh.Scores.RightScores, "-", wsh.Scores.LeftScores)
-		wsh.resetBall(-1)
-		scored = true
-		whoScored = "Left"
-	}
-
-	if scored {
-		scoreUpdate := &pb.ScoreMessage{
-			LeftScore:  wsh.Scores.LeftScores,
-			RightScore: wsh.Scores.RightScores,
-			Scored:     whoScored,
-		}
-
-		scoreMessage = &pb.Message{
-			Type: pb.MsgType_score,
-			MessageType: &pb.Message_Score{
-				Score: scoreUpdate,
-			},
-		}
-	}
-
-	encoded, marshalErr := proto.Marshal(scoreMessage)
-	if marshalErr != nil {
-		log.Println("Failed to marshal ScoreMessage:", marshalErr)
-	}
-
-	// Release the lock before broadcasting
-	wsh.Mu.Unlock()
-
-	// Broadcast outside of the lock if we scored
-	if scored {
-		wsh.broadcastToAll(encoded)
-		log.Println("timer started")
-		<-timer.C
-		log.Println("timer stopped")
-	}
-}
-
-func (wsh *WebSocketHandler) updateBallPosition() {
-	wsh.Mu.Lock()
-
-	// update ball position
-	wsh.BallVar.X += wsh.BallVar.Dx
-	wsh.BallVar.Y += wsh.BallVar.Dy
-
-	// maxWidth := wsh.CanvasVar.Width
-	maxHeight := wsh.CanvasVar.Height
-	ballRadius := wsh.BallVar.Radius
-
-	// wall collision (top & bottom)
-	if wsh.BallVar.Y-ballRadius <= 0 || wsh.BallVar.Y+ballRadius >= maxHeight {
-		wsh.BallVar.Dy *= -1
-	}
-
-	/*
-	   --DEPRECATED-- (now since scoring is there, this dont make sense)
-
-	   if wsh.BallVar.X-ballRadius <= 0 || wsh.BallVar.X+ballRadius >= maxWidth {
-	   wsh.BallVar.Dx *= -1
-	   }
-
-	*/
-
-	// paddle collision logic
-	wsh.handlePaddleCollision()
-	wsh.Mu.Unlock()
-
-	// check if there is any scoring
-	wsh.checkBallOutOfBounds()
-}
-
-// ---------------------------------------------------
-
-// ---------------------------------------------------
-// Paddle Logic functions
-
-func randomVariation() float64 {
-	return (rand.Float64() - 0.5) * 2
-}
-
-func (wsh *WebSocketHandler) updatePaddlePositions(client *client.Client, direction string) {
-	wsh.Mu.Lock()
-	defer wsh.Mu.Unlock()
-
-	var paddle *paddleData
-	var globalPosition *float64
-
-	if client.Team == "left" {
-		paddle = &wsh.LeftPaddleData
-		globalPosition = &globalPaddlePositions.leftPaddle
-	} else {
-		paddle = &wsh.RightPaddleData
-		globalPosition = &globalPaddlePositions.rightPaddle
-	}
-
-	if direction == "up" {
-		paddle.velocity -= acceleration
-	} else if direction == "down" {
-		paddle.velocity += acceleration
-	} else {
-		paddle.velocity *= friction
-	}
-
-	if paddle.velocity > maxSpeed {
-		paddle.velocity = maxSpeed
-	} else if paddle.velocity < -maxSpeed {
-		paddle.velocity = -maxSpeed
-	}
-
-	newPosition := *globalPosition + paddle.velocity
-
-	if newPosition < 0 {
-		newPosition = 0
-		paddle.velocity = 0
-	} else if newPosition+wsh.PaddleVar.Height > wsh.CanvasVar.Height {
-		newPosition = wsh.CanvasVar.Height - wsh.PaddleVar.Height
-		paddle.velocity = 0
-	}
-
-	paddle.movementSum += paddle.velocity
-
-	if paddle.players > 0 {
-		paddle.position = paddle.movementSum / float64(paddle.players)
-		paddle.movementSum = 0
-	} else {
-		paddle.position = 0
-		paddle.movementSum = 0
-	}
-
-	// Prepare game state with current paddle positions
-	// gameState := map[string]float64{
-	// 	"leftPaddleData":  globalPaddlePositions.leftPaddle,
-	// 	"rightPaddleData": globalPaddlePositions.rightPaddle,
-	// }
-
-	// wsh.broadcastToAll(gameState)
-	// wsh.broadcastPaddlePositions()
-}
-
-func (wsh *WebSocketHandler) handlePaddleCollision() {
-	ballRadius := wsh.BallVar.Radius
-
-	leftPaddleRight := wsh.PaddleVar.Width
-	leftPaddleTop := float64(globalPaddlePositions.leftPaddle)
-	leftPaddleBottom := leftPaddleTop + float64(wsh.PaddleVar.Height)
-
-	rightPaddleLeft := wsh.CanvasVar.Width - wsh.PaddleVar.Width
-	rightPaddleTop := float64(globalPaddlePositions.rightPaddle)
-	rightPaddleBottom := rightPaddleTop + float64(wsh.PaddleVar.Height)
-
-	ballSpeed := math.Hypot(wsh.BallVar.Dx, wsh.BallVar.Dy)
-	maxBounceAngle := math.Pi / 3 // 60 degrees max
-
-	if wsh.BallVar.X-ballRadius <= leftPaddleRight &&
-		wsh.BallVar.Y >= leftPaddleTop &&
-		wsh.BallVar.Y <= leftPaddleBottom {
-		//log.Println("collision with the left paddle detected, paddle height top and bottom", leftPaddleTop, leftPaddleBottom)
-
-		relativePosition := (wsh.BallVar.Y - (leftPaddleTop + float64(wsh.PaddleVar.Height)/2)) / (float64(wsh.PaddleVar.Height) / 2)
-		bounceAngle := relativePosition * maxBounceAngle
-		wsh.BallVar.Dx = math.Abs(ballSpeed * math.Cos(bounceAngle))
-		wsh.BallVar.Dy = ballSpeed * math.Sin(bounceAngle)
-		wsh.BallVar.Dy += randomVariation()
-		wsh.BallVar.X = leftPaddleRight + ballRadius
-	}
-
-	if wsh.BallVar.X+ballRadius >= rightPaddleLeft &&
-		wsh.BallVar.Y >= rightPaddleTop &&
-		wsh.BallVar.Y <= rightPaddleBottom {
-		//log.Println("collision with the right paddle detected, paddle height top and bottom", rightPaddleTop, rightPaddleBottom)
-
-		relativePosition := (wsh.BallVar.Y - (rightPaddleTop + float64(wsh.PaddleVar.Height)/2)) / (float64(wsh.PaddleVar.Height) / 2)
-		bounceAngle := relativePosition * maxBounceAngle
-		wsh.BallVar.Dx = -math.Abs(ballSpeed * math.Cos(bounceAngle))
-		wsh.BallVar.Dy = ballSpeed * math.Sin(bounceAngle)
-		wsh.BallVar.Dy += randomVariation()
-		wsh.BallVar.X = rightPaddleLeft - ballRadius
-	}
-}
-
-// ---------------------------------------------------
-
-// ---------------------------------------------------
-// Game Logic Functions
-
+// disconnectPlayer handles player disconnection
 func (wsh *WebSocketHandler) disconnectPlayer(conn *websocket.Conn) {
 	wsh.Mu.Lock()
 	defer wsh.Mu.Unlock()
@@ -369,11 +135,20 @@ func (wsh *WebSocketHandler) disconnectPlayer(conn *websocket.Conn) {
 	}
 
 	client, exists := wsh.Connections[clientId]
+	if !exists {
+		return
+	}
 
-	if client.Team == "left" {
-		wsh.LeftPaddleData.players--
-	} else {
-		wsh.RightPaddleData.players--
+	gameId := wsh.getGameIdForClient(client)
+
+	// Remove player from game engine
+	if gameState, exists := wsh.GameEngine.GetGame(gameId); exists {
+		gameState.RemovePlayer(client.Team)
+	}
+
+	// Remove from room if they're in one
+	if client.RoomId != "" {
+		wsh.RoomManager.RemoveClient(client.RoomId, clientId)
 	}
 
 	close(client.SendQueue)
@@ -383,13 +158,47 @@ func (wsh *WebSocketHandler) disconnectPlayer(conn *websocket.Conn) {
 	conn.Close()
 }
 
-// ---------------------------------------------------
+// assignTeam assigns a team to a client based on their room
+func (wsh *WebSocketHandler) assignTeam(client *client.Client) {
+	gameId := wsh.getGameIdForClient(client)
+	
+	// Count players in this specific game/room
+	playersInGame := 0
+	for _, c := range wsh.Connections {
+		if wsh.getGameIdForClient(c) == gameId {
+			playersInGame++
+		}
+	}
 
-var initialized bool
-var gameRunning bool
+	if playersInGame < 2 {
+		if playersInGame%2 == 0 {
+			client.Team = "left"
+		} else {
+			client.Team = "right"
+		}
+	} else {
+		// Random assignment for additional players
+		if rand.Intn(100)%2 == 0 {
+			client.Team = "left"
+		} else {
+			client.Team = "right"
+		}
+	}
 
-// ---------------------------------------------------
-// Main Game Loop
+	// Create game if it doesn't exist
+	if _, exists := wsh.GameEngine.GetGame(gameId); !exists {
+		wsh.GameEngine.CreateGame(gameId)
+	}
+
+	// Add player to game engine
+	if gameState, exists := wsh.GameEngine.GetGame(gameId); exists {
+		gameState.AddPlayer(client.Team)
+	}
+
+	log.Printf("Client %s assigned to team %s in game %s", client.ID, client.Team, gameId)
+}
+
+// ServeHTTP handles WebSocket connections
 func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	conn, err := wsh.Upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -401,41 +210,20 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	client := &client.Client{
 		Conn:      conn,
-		SendQueue: make(chan []byte, 100), // Increased buffer size
+		SendQueue: make(chan []byte, 100),
 		ID:        clientId,
+		RoomId:    "", // Start in lobby
 	}
 
-	if len(wsh.Connections) < 2 {
-		log.Println("Total number of connections: ", len(wsh.Connections))
-		log.Println("team assigned")
-		if len(wsh.Connections)%2 == 0 {
-			client.Team = "left"
-			wsh.LeftPaddleData.players++
-		} else {
-			client.Team = "right"
-			wsh.RightPaddleData.players++
-		}
-	} else {
-		log.Println("Total number of connections: ", len(wsh.Connections))
-		log.Println("more than 2 players")
-		randomNumber := rand.Intn(100)
-		log.Println("this is the randomNumber", randomNumber)
-		if randomNumber%2 == 0 {
-			client.Team = "left"
-		} else {
-			client.Team = "right"
-		}
-	}
+	// Assign team to client
+	wsh.assignTeam(client)
 
-	log.Println("this is the client", client.ID, client.Team)
-
-	// a message queue, that sends the data to the client
+	// Message queue goroutine
 	go func() {
 		for msg := range client.SendQueue {
 			err := client.Conn.WriteMessage(websocket.BinaryMessage, msg)
 			if err != nil {
-				log.Println("Binary Message Write error (go routine sendqueue):", err)
-				client.Conn.Close()
+				log.Printf("Binary message write error: %v", err)
 				wsh.disconnectPlayer(conn)
 				return
 			}
@@ -443,240 +231,224 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	wsh.Mu.Lock()
-
 	wsh.Connections[clientId] = client
 	wsh.ConnToId[conn] = clientId
-
 	wsh.Mu.Unlock()
 
 	// Handle incoming messages
 	for {
 		_, p, err := conn.ReadMessage()
 		if err != nil {
-			log.Printf("Error reading message from the client: %s", err)
+			log.Printf("Error reading message: %v", err)
 			wsh.disconnectPlayer(conn)
 			return
 		}
 
-		log.Printf("Message received: %s", p)
-
 		message := &pb.Message{}
 		err = proto.Unmarshal(p, message)
-		log.Println("Parsed Message: ", message)
 		if err != nil {
-			log.Println("Error when unmarshalling protobuf binary:", err)
-
-			errorMessage := &pb.ErrorMessage{
-				Error: "Invalid protobuf format",
-			}
-
-			wrappedError := &pb.Message{
-				Type: pb.MsgType_error,
-				MessageType: &pb.Message_Error{
-					Error: errorMessage,
-				},
-			}
-
-			encoded, marshalErr := proto.Marshal(wrappedError)
-			if marshalErr != nil {
-				log.Println("Failed to marshal ErrorMessage:", marshalErr)
-				continue
-			}
-
-			client.SendQueue <- encoded
-		}
-
-		switch message.Type {
-		case pb.MsgType_room_create_request:
-			room_create_req := message.GetRoomCreateRequest()
-			log.Println("Recieved a room create request: %+v", room_create_req)
-			log.Println("Max Players, ", room_create_req.MaxPlayers)
-
-			roomId := wsh.RoomManager.CreateRoom(client, int(room_create_req.MaxPlayers))
-			log.Println("Generated Room Id: ", roomId)
-
-			// start waiting room
-			wsh.startWaitingRoom(roomId);
-			client.RoomId = roomId;
-
-			responseMessage := &pb.RoomCreateResponse{
-				RoomId: roomId,
-			}
-
-			wrappedMessage := &pb.Message{
-				Type: pb.MsgType_room_create_response,
-				MessageType: &pb.Message_RoomCreateResponse{
-					RoomCreateResponse: responseMessage,
-				},
-			}
-
-			encoded, marshalErr := proto.Marshal(wrappedMessage)
-			if marshalErr != nil {
-				log.Println("Failed to marshal ErrorMessage:", marshalErr)
-				continue
-			}
-
-			client.SendQueue <- encoded
-			break
-
-		case pb.MsgType_room_join_request:
-			room_join_req := message.GetRoomJoinRequest()
-			
-			log.Println("Receieved a room join request: %v", room_join_req)
-			break
-
-		case pb.MsgType_init:
-			init := message.GetInit()
-			log.Println("Init Message: %+v", init)
-
-			if !initialized && init.Width > 0 && init.Height > 0 {
-				wsh.Mu.Lock()
-
-				wsh.BallVar = ball.Ball{
-					X:       init.Width / 2,
-					Y:       init.Height / 2,
-					Dx:      -10,
-					Dy:      0,
-					Radius:  ballRadius,
-					Visible: true,
-				}
-
-				//log.Println("global paddle positions", globalPaddlePositions)
-
-				wsh.CanvasVar.Width = init.Width
-				wsh.PaddleVar.Width = init.PaddleWidth
-				wsh.PaddleVar.Height = init.PaddleHeight
-				wsh.CanvasVar.Height = init.Height
-
-				globalPaddlePositions.leftPaddle = wsh.LeftPaddleData.position
-				globalPaddlePositions.rightPaddle = wsh.RightPaddleData.position
-
-				if len(wsh.Connections) == 1 {
-					wsh.LeftPaddleData.position = (init.Height / 2) - (init.PaddleHeight / 2)
-					wsh.RightPaddleData.position = (init.Height / 2) - (init.PaddleHeight / 2)
-					wsh.BallRunning = false
-					wsh.BallVisible = false
-				}
-
-				if !wsh.BallRunning && len(wsh.Connections) > 1 {
-					wsh.BallRunning = true
-					go wsh.startBallUpdates()
-				}
-
-				wsh.Mu.Unlock()
-
-				if len(wsh.Connections) == 2 {
-					initialized = true
-					gameRunning = true
-				}
-
-				initialGameState := &pb.InitialGameStateMessage{
-					LeftPaddleData:  wsh.LeftPaddleData.position,
-					RightPaddleData: wsh.RightPaddleData.position,
-					YourTeam:        client.Team,
-					Clients:         int32(len(wsh.Connections)),
-				}
-
-				wrappedInitialGameState := &pb.Message{
-					Type: pb.MsgType_initial_game_state,
-					MessageType: &pb.Message_InitialGameState{
-						InitialGameState: initialGameState,
-					},
-				}
-
-				encoded, marshalInitErr := proto.Marshal(wrappedInitialGameState)
-				if marshalInitErr != nil {
-					log.Println("Failed to marshal Initial Game State Message:", marshalInitErr)
-					continue
-				}
-
-				log.Println("even after the game is initialized it still enters this block", initialized)
-				client.SendQueue <- encoded
-
-				continue
-
-			}
-
-		case pb.MsgType_movement:
-			move := message.GetMovement()
-			log.Println("Movement Message: %+v", move)
-
-			var movement float64
-
-			if move.Direction == "up" {
-				movement = -30
-			} else if move.Direction == "down" {
-				movement = 30
-			}
-
-			wsh.Mu.Lock()
-			//log.Println("updates of global positions, left paddle and right paddle  ",
-			//globalPaddlePositions, wsh.LeftPaddleData.position, wsh.RightPaddleData.position)
-
-			if client.Team == "left" {
-				newLeftPaddlePos := globalPaddlePositions.leftPaddle + movement
-
-				if newLeftPaddlePos >= 0 && newLeftPaddlePos+wsh.PaddleVar.Height <= wsh.CanvasVar.Height {
-					globalPaddlePositions.leftPaddle = newLeftPaddlePos
-				}
-
-				wsh.LeftPaddleData.movementSum += movement
-				if wsh.LeftPaddleData.players > 0 {
-					wsh.LeftPaddleData.position = wsh.LeftPaddleData.movementSum / float64(wsh.LeftPaddleData.players)
-					wsh.RightPaddleData.position = 0
-					wsh.LeftPaddleData.movementSum = 0
-				} else {
-					wsh.LeftPaddleData.position = 0
-					wsh.LeftPaddleData.movementSum = 0
-				}
-			} else {
-				newRightPaddlePos := globalPaddlePositions.rightPaddle + movement
-
-				if newRightPaddlePos >= 0 && newRightPaddlePos+wsh.PaddleVar.Height <= wsh.CanvasVar.Height {
-					globalPaddlePositions.rightPaddle = newRightPaddlePos
-				}
-
-				wsh.RightPaddleData.movementSum += movement
-				if wsh.RightPaddleData.players > 0 {
-					wsh.RightPaddleData.position = wsh.RightPaddleData.movementSum / float64(wsh.RightPaddleData.players)
-					wsh.LeftPaddleData.position = 0
-					wsh.RightPaddleData.movementSum = 0
-				} else {
-					wsh.RightPaddleData.position = 0
-					wsh.RightPaddleData.movementSum = 0
-				}
-			}
-			wsh.Mu.Unlock()
-
-			clients := int32(len(wsh.Connections))
-
-			// optional fields should be sent as the address, because proto makes them pointers
-			gameState := &pb.GameStateMessage{
-				LeftPaddleData:  &globalPaddlePositions.leftPaddle,
-				RightPaddleData: &globalPaddlePositions.rightPaddle,
-				YourTeam:        &client.Team,
-				Clients:         &clients,
-			}
-
-			wrappedGameState := &pb.Message{
-				Type: pb.MsgType_game_state,
-				MessageType: &pb.Message_GameState{
-					GameState: gameState,
-				},
-			}
-
-			encoded, marshalErr := proto.Marshal(wrappedGameState)
-			if marshalErr != nil {
-				log.Println("Failed to marshal Game State Message:", marshalErr)
-				continue
-			}
-
-			client.SendQueue <- encoded
+			log.Printf("Error unmarshalling protobuf: %v", err)
+			wsh.sendError(client, "Invalid protobuf format")
 			continue
 		}
 
-		if gameRunning && initialized {
-			log.Println("game is running")
+		wsh.handleMessage(client, message)
+	}
+}
+
+// handleMessage processes incoming messages
+func (wsh *WebSocketHandler) handleMessage(client *client.Client, message *pb.Message) {
+	switch message.Type {
+	case pb.MsgType_room_create_request:
+		wsh.handleRoomCreateRequest(client, message.GetRoomCreateRequest())
+	
+	case pb.MsgType_room_join_request:
+		wsh.handleRoomJoinRequest(client, message.GetRoomJoinRequest())
+	
+	case pb.MsgType_init:
+		wsh.handleInitMessage(client, message.GetInit())
+	
+	case pb.MsgType_movement:
+		wsh.handleMovementMessage(client, message.GetMovement())
+	
+	default:
+		log.Printf("Unknown message type: %v", message.Type)
+	}
+}
+
+// handleInitMessage handles game initialization
+func (wsh *WebSocketHandler) handleInitMessage(client *client.Client, init *pb.InitMessage) {
+	gameId := wsh.getGameIdForClient(client)
+	gameState, exists := wsh.GameEngine.GetGame(gameId)
+	if !exists {
+		log.Printf("Game state not found for game ID: %s", gameId)
+		return
+	}
+
+	if !gameState.Initialized && init.Width > 0 && init.Height > 0 {
+		gameState.Initialize(init.Width, init.Height, init.PaddleWidth, init.PaddleHeight)
+		
+		// Count players in this game
+		playersInGame := 0
+		for _, c := range wsh.Connections {
+			if wsh.getGameIdForClient(c) == gameId {
+				playersInGame++
+			}
+		}
+		
+		// Start ball updates if we have enough players
+		if playersInGame > 1 && !gameState.BallRunning {
+			gameState.StartBallUpdates(wsh.GameEngine, gameId)
 		}
 	}
+
+	leftPaddle, rightPaddle, _, _ := gameState.GetGameState()
+
+	// Count clients in this specific game/room
+	clientsInGame := int32(0)
+	for _, c := range wsh.Connections {
+		if wsh.getGameIdForClient(c) == gameId {
+			clientsInGame++
+		}
+	}
+
+	initialGameState := &pb.InitialGameStateMessage{
+		LeftPaddleData:  leftPaddle,
+		RightPaddleData: rightPaddle,
+		YourTeam:        client.Team,
+		Clients:         clientsInGame,
+	}
+
+	wrappedMessage := &pb.Message{
+		Type: pb.MsgType_initial_game_state,
+		MessageType: &pb.Message_InitialGameState{
+			InitialGameState: initialGameState,
+		},
+	}
+
+	encoded, err := proto.Marshal(wrappedMessage)
+	if err != nil {
+		log.Printf("Failed to marshal initial game state: %v", err)
+		return
+	}
+
+	client.SendQueue <- encoded
+}
+
+// handleMovementMessage handles paddle movement
+func (wsh *WebSocketHandler) handleMovementMessage(client *client.Client, move *pb.MovementMessage) {
+	gameId := wsh.getGameIdForClient(client)
+	gameState, exists := wsh.GameEngine.GetGame(gameId)
+	if !exists {
+		return
+	}
+
+	leftPaddle, rightPaddle := gameState.MovePaddle(client.Team, move.Direction)
+	
+	// Count clients in this specific game/room
+	clientsInGame := int32(0)
+	for _, c := range wsh.Connections {
+		if wsh.getGameIdForClient(c) == gameId {
+			clientsInGame++
+		}
+	}
+
+	gameStateMsg := &pb.GameStateMessage{
+		LeftPaddleData:  &leftPaddle,
+		RightPaddleData: &rightPaddle,
+		YourTeam:        &client.Team,
+		Clients:         &clientsInGame,
+	}
+
+	wrappedMessage := &pb.Message{
+		Type: pb.MsgType_game_state,
+		MessageType: &pb.Message_GameState{
+			GameState: gameStateMsg,
+		},
+	}
+
+	encoded, err := proto.Marshal(wrappedMessage)
+	if err != nil {
+		log.Printf("Failed to marshal game state: %v", err)
+		return
+	}
+
+	// Broadcast to all clients in the same game/room
+	if client.RoomId != "" {
+		wsh.broadcastToRoom(client.RoomId, encoded)
+	} else {
+		client.SendQueue <- encoded // Just send to the client if they're in lobby
+	}
+}
+
+// handleRoomCreateRequest handles room creation requests
+func (wsh *WebSocketHandler) handleRoomCreateRequest(client *client.Client, req *pb.RoomCreateRequest) {
+
+	roomId := wsh.RoomManager.CreateRoom(client, int(req.MaxPlayers))
+	log.Println("This is the room Id that has been created: ", roomId)
+	
+	client.RoomId = roomId
+	wsh.GameEngine.CreateGame(roomId)
+	wsh.assignTeam(client)
+
+	response := &pb.RoomCreateResponse{
+		RoomId: roomId,
+	}
+
+	wrappedMessage := &pb.Message{
+		Type: pb.MsgType_room_create_response,
+		MessageType: &pb.Message_RoomCreateResponse{
+			RoomCreateResponse: response,
+		},
+	}
+
+	encoded, err := proto.Marshal(wrappedMessage)
+	if err != nil {
+		log.Printf("Failed to marshal room create response: %v", err)
+		return
+	}
+
+	client.SendQueue <- encoded
+	
+	log.Printf("Room %s created by client %s", roomId, client.ID)
+}
+
+// handleRoomJoinRequest handles room join requests
+func (wsh *WebSocketHandler) handleRoomJoinRequest(client *client.Client, req *pb.RoomJoinRequest) {
+	success, errorMsg := wsh.RoomManager.JoinRoom(req.RoomId, client)
+	
+	if success {
+		client.RoomId = req.RoomId
+		
+		// Reassign team for the room's game
+		wsh.assignTeam(client)
+		
+		log.Printf("Client %s joined room %s", client.ID, req.RoomId)
+
+	} else {
+		wsh.sendError(client, errorMsg)
+		log.Printf("Client %s failed to join room %s: %s", client.ID, req.RoomId, errorMsg)
+	}
+}
+
+// sendError sends an error message to a client
+func (wsh *WebSocketHandler) sendError(client *client.Client, errorMsg string) {
+	errorMessage := &pb.ErrorMessage{
+		Error: errorMsg,
+	}
+
+	wrappedMessage := &pb.Message{
+		Type: pb.MsgType_error,
+		MessageType: &pb.Message_Error{
+			Error: errorMessage,
+		},
+	}
+
+	encoded, err := proto.Marshal(wrappedMessage)
+	if err != nil {
+		log.Printf("Failed to marshal error message: %v", err)
+		return
+	}
+
+	client.SendQueue <- encoded
 }

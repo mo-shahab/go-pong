@@ -228,7 +228,6 @@ func (wsh *WebSocketHandler) closeRoom(roomId string, reason string) {
 	}
 	
 	wsh.broadcastToRoom(roomId, encoded)
-	
 	log.Printf("Room %s closed: %s", roomId, reason)
 }
 

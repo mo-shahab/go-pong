@@ -9,6 +9,7 @@ import (
 	"github.com/mo-shahab/go-pong/paddle"
 	"github.com/mo-shahab/go-pong/room"
 	"github.com/mo-shahab/go-pong/scores"
+	"github.com/mo-shahab/go-pong/game"
 )
 
 type WebSocketHandler struct {
@@ -28,6 +29,7 @@ type WebSocketHandler struct {
 	Scores          scores.Scores
 	RoomManager     *room.RoomManager
 	WaitingRooms map[string]*room.WaitingRoomState
+	GameEngine *game.Engine
 }
 
 type paddleData struct {
