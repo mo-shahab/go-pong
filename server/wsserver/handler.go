@@ -6,13 +6,13 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
-	"time"
 	"github.com/gorilla/websocket"
 	"github.com/mo-shahab/go-pong/client"
 	"github.com/mo-shahab/go-pong/game"
 	pb "github.com/mo-shahab/go-pong/proto"
 	"github.com/mo-shahab/go-pong/room"
 	"google.golang.org/protobuf/proto"
+	"github.com/google/uuid"
 )
 
 // waiting room constants
@@ -206,7 +206,19 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientId := conn.RemoteAddr().String() + "_" + time.Now().String()
+	// clientId := conn.RemoteAddr().String() + "_" + time.Now().String()
+	clientId := uuid.New().String()
+
+	initClient := &pb.InitClientMessage{
+		ClientId: clientId,
+	}
+
+	wrappedMessage := &pb.Message{
+		Type: pb.MsgType_init_client,
+		MessageType: &pb.Message_InitClient{
+			InitClient: initClient,
+		},
+	}
 
 	client := &client.Client{
 		Conn:      conn,
@@ -214,6 +226,14 @@ func (wsh *WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ID:        clientId,
 		RoomId:    "", // Start in lobby
 	}
+
+	encoded, err := proto.Marshal(wrappedMessage)
+	if err != nil {
+		log.Printf("Failed to marshal room create response: %v", err)
+		return
+	}
+	
+	client.SendQueue <- encoded
 
 	// Assign team to client
 	wsh.assignTeam(client)
@@ -384,6 +404,8 @@ func (wsh *WebSocketHandler) handleMovementMessage(client *client.Client, move *
 // handleRoomCreateRequest handles room creation requests
 func (wsh *WebSocketHandler) handleRoomCreateRequest(client *client.Client, req *pb.RoomCreateRequest) {
 
+	log.Println("Room Create Request: ", req);
+
 	roomId := wsh.RoomManager.CreateRoom(client, int(req.MaxPlayers))
 	log.Println("This is the room Id that has been created: ", roomId)
 	
@@ -402,11 +424,14 @@ func (wsh *WebSocketHandler) handleRoomCreateRequest(client *client.Client, req 
 		},
 	}
 
+	wsh.startWaitingRoom(roomId)
+
 	encoded, err := proto.Marshal(wrappedMessage)
 	if err != nil {
 		log.Printf("Failed to marshal room create response: %v", err)
 		return
 	}
+	
 
 	client.SendQueue <- encoded
 	
@@ -420,9 +445,7 @@ func (wsh *WebSocketHandler) handleRoomJoinRequest(client *client.Client, req *p
 	if success {
 		client.RoomId = req.RoomId
 		
-		// Reassign team for the room's game
 		wsh.assignTeam(client)
-		
 		log.Printf("Client %s joined room %s", client.ID, req.RoomId)
 
 	} else {

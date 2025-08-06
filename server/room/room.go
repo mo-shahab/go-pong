@@ -3,7 +3,6 @@ package room
 import (
 	"context"
 	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
 	"github.com/mo-shahab/go-pong/client"
 	"log"
 	"sync"
@@ -12,7 +11,7 @@ import (
 // typedef to define the Room
 type Room struct {
 	ID         string
-	Host       *websocket.Conn
+	Host       string
 	Clients    map[string]*client.Client
 	MaxPlayers int
 	Mu         sync.Mutex
@@ -70,7 +69,7 @@ func (rm *RoomManager) CreateRoom(host *client.Client, maxPlayers int) string {
 
 	room := &Room{
 		ID:         roomId,
-		Host:       host.Conn,
+		Host:       host.ID,
 		Clients:    map[string]*client.Client{host.ID: host},
 		MaxPlayers: maxPlayers,
 	}
@@ -122,7 +121,7 @@ func (rm *RoomManager) RemoveClient(roomId string, clientId string) {
 		return
 	}
 	
-	isHost := client.Conn == room.Host
+	isHost := client.ID == room.Host
 
 	if isHost {
 		log.Println("The host of the thing is being executed this for some reason ")

@@ -11,19 +11,20 @@ enum MsgType {
   movement = 2;
   game_state = 3;
   score = 4;
-  initial_game_state = 5; // from server to client
-  paddle_positions = 6;
-  ball_position = 7;
-  room_create_request = 8;
-  room_create_response = 9;
-  room_join_request = 10;
-  room_join_response = 11;
-  signal_request = 12;
-  signal_response = 13;
-  waiting_room_state = 14;
-  game_start = 15;
-  room_closed = 16;
-  error = 17;
+  init_client = 5;
+  initial_game_state = 6; // from server to client
+  paddle_positions = 7;
+  ball_position = 8;
+  room_create_request = 9;
+  room_create_response = 10;
+  room_join_request = 11;
+  room_join_response = 12;
+  signal_request = 13;
+  signal_response = 14;
+  waiting_room_state = 15;
+  game_start = 16;
+  room_closed = 17;
+  error = 18;
 }
 
 // ==========================
@@ -41,14 +42,17 @@ message SignalResponse {
 // Room Related Messages
 message RoomCreateRequest {
   int32 max_players = 1;
+  string client_id = 2;
 }
 
 message RoomCreateResponse {
   string room_id = 1;
+  // string client_id = 2; // also return the client_id of as the response to to store the thing
 }
 
 message RoomJoinRequest {
   string room_id = 1;
+  optional string client_id = 2;
 }
 
 message RoomJoinResponse {
@@ -63,6 +67,11 @@ message Ball {
   double x = 1;
   double y = 2;
   double radius = 3;
+}
+
+// Send Client information created by the server (server to client)
+message InitClientMessage {
+  string client_id = 1;
 }
 
 // Client initialization message (from client to server)
@@ -155,19 +164,20 @@ message Message {
     MovementMessage movement = 3;
     GameStateMessage game_state = 4;
     ScoreMessage score = 5;
-    InitialGameStateMessage initial_game_state = 6;
-    PaddlePositionsMessage paddle_positions = 7;
-    BallPositionMessage ball_position = 8;
-    RoomCreateRequest room_create_request = 9;
-    RoomCreateResponse room_create_response = 10;
-    RoomJoinRequest room_join_request = 11;
-    RoomJoinResponse room_join_response = 12;
-    SignalRequest signal_request = 13;
-    SignalResponse signal_response = 14;
-    WaitingRoomStateMessage waiting_room_state = 15;
-    GameStartMessage game_start = 16;
-    RoomClosedMessage room_closed = 17;
-    ErrorMessage error = 18;
+    InitClientMessage init_client = 6;
+    InitialGameStateMessage initial_game_state = 7;
+    PaddlePositionsMessage paddle_positions = 8;
+    BallPositionMessage ball_position = 9;
+    RoomCreateRequest room_create_request = 10;
+    RoomCreateResponse room_create_response = 11;
+    RoomJoinRequest room_join_request = 12;
+    RoomJoinResponse room_join_response = 13;
+    SignalRequest signal_request = 14;
+    SignalResponse signal_response = 15;
+    WaitingRoomStateMessage waiting_room_state = 16;
+    GameStartMessage game_start = 17;
+    RoomClosedMessage room_closed = 18;
+    ErrorMessage error = 19;
   }
 }
 
