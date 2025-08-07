@@ -52,7 +52,7 @@ message RoomCreateResponse {
 
 message RoomJoinRequest {
   string room_id = 1;
-  optional string client_id = 2;
+  string client_id = 2;
 }
 
 message RoomJoinResponse {

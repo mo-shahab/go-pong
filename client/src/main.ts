@@ -1,96 +1,148 @@
+// main.ts
 import { type RoomJoinRequest, MsgType, type RoomCreateRequest, Message } from "./proto/gopong";
+import { wsManager } from "./websocket-manager";
 
 const createButton = document.getElementById("create-room") as HTMLButtonElement;
 const joinButton = document.getElementById("join-room") as HTMLButtonElement;
 const statusDisplay = document.getElementById("status") as HTMLDivElement;
 const roomCodeDisplay = document.getElementById("room-code-display") as HTMLDivElement;
 
-// Connect to the WebSocket server
-let socket: Websocket;
-
-createButton.addEventListener("click", () => {
-    const roomCreateRequest: RoomCreateRequest = { 
-        maxPlayers: 10,
-        clientId: localStorage.getItem("client-id"),
-    };
-
-    const wrappedMessagePlain = {
-        type: MsgType.room_create_request,
-        roomCreateRequest: roomCreateRequest, 
-    };
-
-    const encoded: Uint8Array = Message.encode(wrappedMessagePlain).finish();
-    socket.send(encoded);
-})
-
-joinButton.addEventListener("click", () => {
-    const roomCodeInput = document.getElementById("room-code-input") as HTMLInputElement;
-    
-    const roomCode: string = roomCodeInput.value;
-    console.log("Clicked on the join room button, room code: ", roomCode);
-
-    const roomJoinRequest: RoomJoinRequest = { 
-        roomId: roomCode,
-    };
-
-    const wrappedMessagePlain = {
-        type: MsgType.room_join_request,
-        roomJoinRequest: roomJoinRequest,
-    }
-
-    const encoded: Uint8Array = Message.encode(wrappedMessagePlain).finish();
-    socket.send(encoded);
-})
-
-function connectWebsocket() {
-    socket = new WebSocket("ws://localhost:8080/ws");
-    socket.binaryType = "arraybuffer";
-
-    socket.onopen = async() => {
-        console.log("Connected to websocket server");
-        statusDisplay.textContent = "Connected to host";
-    }
-
-    socket.onmessage = async (event: MessageEvent): void => {
-        const arrayBuffer = await event.data;
-        const bytes = new Uint8Array(arrayBuffer);
-
-        const message = Message.decode(bytes);
-        handleMessage(message);
-    }
-}
-
-function handleMessage (message: Message){
+function handleMessage(message: Message) {
     switch (message.type) {
-
         case MsgType.init_client:
             console.log("Init client Message: ", message);
             const initClient = message.initClient;
-            const clientId = initClient.clientId;
-            localStorage.setItem("client-id", clientId);
-            console.log("This is the clientId: ", clientId);
+            if (initClient && initClient.clientId) {
+                localStorage.setItem("client-id", initClient.clientId);
+                console.log("This is the clientId: ", initClient.clientId);
+                statusDisplay.textContent = "Connected and authenticated";
+            }
             break;
-
+            
         case MsgType.room_create_response:
             const response = message.roomCreateResponse;
-            console.log("Room Created Succesfully", response);
+            console.log("Room Created Successfully", response);
             
-            if(response.roomId){
+            if (response && response.roomId) {
                 roomCodeDisplay.textContent = `Room Code: ${response.roomId}`;
-                statusDisplay.textContent = "Room Created Succesfully";
-
-                // window.location.href = `game.html?roomId=${encodeURIComponent(response.roomId)}&action=create`;
+                statusDisplay.textContent = "Room Created Successfully";
             } else {
                 statusDisplay.textContent = "Failed To Create Room";
             }
-
             break;
-
-
+            
         case MsgType.room_join_response:
-            console.log("The message for the join room has been received");
+            console.log("Join room response received", message);
+            const joinResponse = message.roomJoinResponse;
+            
+            if (joinResponse && joinResponse.success && joinResponse.roomId) {
+                statusDisplay.textContent = "Joined room successfully";
+                setTimeout(() => {
+                    window.location.href = `game.html?roomId=${encodeURIComponent(joinResponse.roomId)}&action=join`;
+                }, 100);
+            } else {
+                statusDisplay.textContent = "Failed to join room";
+            }
             break;
+            
+        default:
+            console.log("Unhandled message type:", message.type);
     }
 }
 
-connectWebsocket();
+// Register the message handler immediately
+wsManager.addMessageHandler(handleMessage);
+
+// Set initial status
+statusDisplay.textContent = "Connecting to server...";
+
+// Wait for connection to be ready
+wsManager.connect()
+    .then(() => {
+        console.log("WebSocket connected successfully");
+        statusDisplay.textContent = "Connected to server";
+    })
+    .catch((error) => {
+        console.error("Failed to connect:", error);
+        statusDisplay.textContent = "Connection failed - Check server";
+    });
+
+createButton.addEventListener("click", async () => {
+    if (!wsManager.isConnected()) {
+        statusDisplay.textContent = "Reconnecting...";
+        try {
+            await wsManager.connect();
+        } catch (error) {
+            statusDisplay.textContent = "Connection failed";
+            return;
+        }
+    }
+
+    const clientId = localStorage.getItem("client-id");
+    if (!clientId) {
+        statusDisplay.textContent = "Waiting for authentication...";
+        return;
+    }
+
+    statusDisplay.textContent = "Creating room...";
+    
+    const roomCreateRequest: RoomCreateRequest = { 
+        maxPlayers: 10,
+        clientId: clientId,
+    };
+    
+    const wrappedMessage = {
+        type: MsgType.room_create_request,
+        roomCreateRequest: roomCreateRequest, 
+    };
+    
+    const encoded: Uint8Array = Message.encode(wrappedMessage).finish();
+    wsManager.send(encoded);
+});
+
+joinButton.addEventListener("click", async () => {
+    if (!wsManager.isConnected()) {
+        statusDisplay.textContent = "Reconnecting...";
+        try {
+            await wsManager.connect();
+        } catch (error) {
+            statusDisplay.textContent = "Connection failed";
+            return;
+        }
+    }
+
+    const clientId = localStorage.getItem("client-id");
+    if (!clientId) {
+        statusDisplay.textContent = "Waiting for authentication...";
+        return;
+    }
+
+    const roomCodeInput = document.getElementById("room-code-input") as HTMLInputElement;
+    const roomCode = roomCodeInput.value.trim();
+    
+    if (!roomCode) {
+        statusDisplay.textContent = "Please enter a room code";
+        roomCodeInput.focus();
+        return;
+    }
+    
+    statusDisplay.textContent = "Joining room...";
+    
+    const roomJoinRequest: RoomJoinRequest = { 
+        roomId: roomCode,
+        clientId: clientId,
+    };
+    
+    const wrappedMessage = {
+        type: MsgType.room_join_request,
+        roomJoinRequest: roomJoinRequest,
+    };
+    
+    const encoded: Uint8Array = Message.encode(wrappedMessage).finish();
+    wsManager.send(encoded);
+});
+
+// Clean up when leaving the page
+window.addEventListener('beforeunload', () => {
+    wsManager.removeMessageHandler(handleMessage);
+});
