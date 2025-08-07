@@ -1,6 +1,7 @@
 // main.ts
 import { type RoomJoinRequest, MsgType, type RoomCreateRequest, Message } from "./proto/gopong";
 import { wsManager } from "./websocket-manager";
+import { gameState } from "./game-state";
 
 const createButton = document.getElementById("create-room") as HTMLButtonElement;
 const joinButton = document.getElementById("join-room") as HTMLButtonElement;
@@ -25,6 +26,7 @@ function handleMessage(message: Message) {
             
             if (response && response.roomId) {
                 roomCodeDisplay.textContent = `Room Code: ${response.roomId}`;
+                gameState.setRoomId(response.roomId);
                 statusDisplay.textContent = "Room Created Successfully";
             } else {
                 statusDisplay.textContent = "Failed To Create Room";
@@ -37,9 +39,6 @@ function handleMessage(message: Message) {
             
             if (joinResponse && joinResponse.success && joinResponse.roomId) {
                 statusDisplay.textContent = "Joined room successfully";
-                setTimeout(() => {
-                    window.location.href = `game.html?roomId=${encodeURIComponent(joinResponse.roomId)}&action=join`;
-                }, 100);
             } else {
                 statusDisplay.textContent = "Failed to join room";
             }
